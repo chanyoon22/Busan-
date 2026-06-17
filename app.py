@@ -56,9 +56,10 @@ st.markdown(f"""
 st.markdown(f"""
 <div class="hero">
   <h1>🧭 부산 공공기관 커리어 로드맵</h1>
-  <p>부산교통공사·부산도시공사·부산관광공사 5년 채용데이터로,
+  <p>부산 공공기관 공개 채용데이터로,
      <b>전공·전형별로 데이터상 유리한 직무와 준비 순서</b>를 설계합니다.
-     <span class="src">(추천 수치는 과거 통계이며 예측이 아닙니다)</span></p>
+     <span class="src">(경쟁률·합격선은 교통·도시공사 2기관, 신규채용 규모는 4기관,
+     채용정보는 3기관 — 커버리지는 탭6에 그대로 공개. 수치는 과거 통계이며 예측이 아닙니다)</span></p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -107,18 +108,22 @@ with st.sidebar:
         disabled = st.checkbox("장애인 등록")
 
         st.markdown("**가중치 조절** (추천 기준을 직접 설계)")
-        w_fit = st.slider("전공 적합", 0.0, 1.0, 0.40, 0.05)
-        w_comp = st.slider("경쟁 여유", 0.0, 1.0, 0.30, 0.05)
-        w_size = st.slider("채용 규모", 0.0, 1.0, 0.15, 0.05)
-        w_trend = st.slider("채용 추세", 0.0, 1.0, 0.15, 0.05)
+        w_fit = st.slider("전공 적합", 0.0, 1.0, 0.45, 0.05)
+        w_comp = st.slider("경쟁 여유", 0.0, 1.0, 0.35, 0.05)
+        w_size = st.slider("데이터 표본량(신뢰도)", 0.0, 1.0, 0.20, 0.05,
+                           help="실제 채용 인원 크기가 아니라, 그 직무의 경쟁률 추정에 쓰인 "
+                                "데이터 레코드 수입니다. 많을수록 추정이 안정적입니다.")
 
         submitted = st.form_submit_button("프로필 제출 / 다시 계산", use_container_width=True)
-    st.caption("입력은 저장되지 않습니다. 제출해야 추천·AI가 실행되어 API 비용을 아낍니다.")
+    st.caption("입력은 저장되지 않습니다. 다만 AI 상담(탭3)을 쓰면 프로필이 외부 생성형 AI "
+               "API로 전송됩니다 — 아래 안내 참고. 제출해야 추천·AI가 실행됩니다.")
+    st.caption("⚠️ 개인정보: 장애·취업지원대상자 등 민감정보는 AI 상담을 켜지 않으면 외부로 "
+               "전송되지 않습니다. 추천·점수 계산은 모두 브라우저 세션 안에서만 처리됩니다.")
 
 # 제출 전이면 기본 프로필로 1회만 계산(초기 화면용), 제출 시 갱신
 if submitted or "student" not in st.session_state:
-    tot = (w_fit + w_comp + w_size + w_trend) or 1.0
-    weights = dict(fit=w_fit/tot, comp=w_comp/tot, size=w_size/tot, trend=w_trend/tot)
+    tot = (w_fit + w_comp + w_size) or 1.0
+    weights = dict(fit=w_fit/tot, comp=w_comp/tot, size=w_size/tot)
     lang_scores = {lang_test: lang_val} if lang_val.strip() else {}
     lsum = sc.lang_summary(lang_scores)
     st.session_state.student = dict(
@@ -133,9 +138,10 @@ if submitted or "student" not in st.session_state:
 student = st.session_state.student
 recs = st.session_state.recs
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 내 직무 로드맵", "📊 채용 미스매치 진단",
-                                  "💬 AI 커리어 상담", "🎓 청년인턴 점수+성장추적",
-                                  "📋 공고 적격 체커(관광공사 계약직)"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["🎯 내 직무 로드맵", "📊 채용 미스매치 진단",
+     "💬 AI 커리어 상담", "🎓 청년인턴 점수+체크리스트",
+     "📋 공고 적격 체커(관광공사 계약직)", "🗂 데이터 커버리지·품질"])
 
 # ───────────────────────── 탭 1 ─────────────────────────
 with tab1:
@@ -152,11 +158,13 @@ with tab1:
             social_tag = (f'<span class="tag" style="background:#fde8e1;color:{ACCENT}">사회배려 전형 갭 반영</span>'
                           if r["사회배려적용"] else "")
             cut_txt = (f"평균 합격선 {d['합격선평균']}점 (±{d['합격선표준편차']})"
+                       + (f" · {'+'.join(i.replace('부산','') for i in d.get('합격선기관',[]))} 혼합"
+                          if len(d.get('합격선기관', [])) > 1 else "")
                        if d['합격선평균'] else "합격선 공시 없음")
             st.markdown(f"""
             <div class="reccard">
               <span class="scorepill">{r['적합도']}</span>
-              <div class="rank">{i}순위 · 적합도</div>
+              <div class="rank">{i}순위 · 데이터 유리도(시뮬)</div>
               <div class="track">{r['직무']}</div>
               {blind_tag}{social_tag}
               <div style="margin-top:.6rem;font-size:.82rem;color:{MUTED}">전공적합 {int(comp['전공적합']*100)}%</div>
@@ -173,6 +181,9 @@ with tab1:
               {f'<div style="font-size:.8rem;color:{ACCENT};margin-top:.4rem">★ {r["로드맵"]["사회배려안내"]}</div>' if r['로드맵']['사회배려안내'] else ''}
             </div>
             """, unsafe_allow_html=True)
+        st.caption("‘데이터 유리도’는 전공적합·경쟁여유·표본량을 가중합한 **준비 우선순위 "
+                   "시뮬레이션 점수**입니다. 실제 합격 가능성이나 합격 예측이 아닙니다. "
+                   "가중치는 사이드바에서 직접 조절합니다.")
     with c2:
         st.markdown("##### AI 맞춤 로드맵")
 
@@ -236,12 +247,17 @@ with tab2:
     tfig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
                        plot_bgcolor="white", font=dict(family="Pretendard"))
     st.plotly_chart(tfig, use_container_width=True)
-    st.caption("출처: data.go.kr — 부산교통공사·부산도시공사·부산관광공사 채용 공시. "
-               "수치는 5년 누적 구조 경향이며 당해연도 채용규모는 각 기관 공고로 재확인 필요.")
+    st.caption("출처: data.go.kr 신규채용 공시 — 부산교통·도시·환경·시설 4기관 정규직(일반). "
+               "관광공사는 신규채용 규모 공시가 없어 제외. 5년 누적 구조 경향이며 "
+               "당해연도 채용규모는 각 기관 공고로 재확인 필요.")
 
 # ───────────────────────── 탭 3: AI 상담 ─────────────────────────
 with tab3:
     st.markdown("##### 무엇이든 물어보세요 (데이터·공고 근거로 답합니다)")
+    st.warning("🔒 이 탭에서 질문을 보내면 **입력한 프로필(학년·전공·자격·어학·거주지, "
+               "그리고 입력했다면 장애·취업지원대상자 여부)과 추천 결과가 외부 생성형 AI "
+               "API(Gemini)로 전송**됩니다. 민감정보 전송을 원치 않으면 이 탭을 쓰지 마세요. "
+               "탭1·2·4·5의 계산은 외부 전송 없이 세션 안에서만 처리됩니다.")
     st.caption('예: "전기직 일반전형 경쟁률은?" / "사무직 토익 몇 점 필요해?" / "사회배려 전형이 얼마나 유리해?"')
     if "chat" not in st.session_state:
         st.session_state.chat = []
@@ -290,10 +306,11 @@ with tab4:
 
     st.divider()
 
-    # (2) 성장추적 — 로드맵 체크리스트 (세션 기반 MVP)
-    st.markdown("##### 📈 성장추적: 다음에 켤 단계")
-    st.caption("⚠️ 현재는 세션 기반(새로고침 시 초기화). 진짜 월 단위 추적은 로그인+DB가 "
-               "필요합니다(아래 한계 참고).")
+    # (2) 로드맵 체크리스트 (세션 기반 — '성장추적'이라 부르지 않음)
+    st.markdown("##### ✅ 로드맵 체크리스트 (시뮬레이터)")
+    st.caption("⚠️ 이건 지속 '성장추적' 기능이 아니라 **세션 체크리스트**입니다. 새로고침하면 "
+               "초기화됩니다. 월 단위 추적·재방문 불러오기는 로그인+DB가 있어야 가능하며 "
+               "현재는 미구현(로드맵 단계)입니다. 발표 시 '추적'이라 과장하지 않습니다.")
 
     # 1순위 직무 로드맵을 단계 체크리스트로 변환
     if recs:
@@ -418,3 +435,74 @@ with tab5:
             "- 즉 **동일 기관·동일 TOEIC라도 공고에 따라 타 시험 컷이 크게 다릅니다.**\n"
             "- 그래서 이 체커는 글로벌 환산표(`LANG_EQUIV`)로 '충족'을 추정하지 않고, "
             "공고가 적은 시험별 컷을 직접 비교합니다. (지어내지 않는다 — 1원칙)")
+
+# ───────────────── 탭 6: 데이터 커버리지·품질 대시보드 ─────────────────
+with tab6:
+    st.markdown("##### 🗂 데이터 커버리지·품질 (이 제품이 실제로 쓰는 데이터의 한계 공개)")
+    cov = ds["coverage"]
+    st.info(cov["한줄정정"])
+
+    # (1) 커버리지 매트릭스 — 어떤 데이터가 어느 기관까지 있는가
+    st.markdown("**커버리지 매트릭스** — 항목별로 실제 보유 기관")
+    INSTS = ["부산교통공사", "부산도시공사", "부산관광공사", "부산환경공단", "부산시설공단"]
+    rows_cov = [
+        ("경쟁률(직무×전형)", cov["경쟁률"]["기관"]),
+        ("필기 합격선",        cov["합격선"]["기관"]),
+        ("신규채용 규모/추세",  cov["신규채용규모"]["기관"]),
+        ("채용정보(임용조건)",  cov["채용정보"]["기관"]),
+    ]
+    head = "<tr><th style='text-align:left;padding:.3rem .6rem'>데이터</th>" + \
+           "".join(f"<th style='padding:.3rem .6rem'>{i.replace('부산','')}</th>" for i in INSTS) + "</tr>"
+    body = ""
+    for name, have in rows_cov:
+        cells = ""
+        for i in INSTS:
+            ok = i in have
+            cells += (f"<td style='text-align:center;color:{GOOD};font-weight:700'>●</td>" if ok
+                      else f"<td style='text-align:center;color:#cfd8e0'>○</td>")
+        body += f"<tr><td style='padding:.3rem .6rem;color:{INK}'>{name}</td>{cells}</tr>"
+    st.markdown(f"<table style='border-collapse:collapse;font-size:.86rem'>{head}{body}</table>",
+                unsafe_allow_html=True)
+    st.caption("● 보유 / ○ 없음. 경쟁률·합격선은 교통·도시 2기관에만 존재합니다. "
+               "관광공사는 채용정보만, 환경·시설공단은 신규채용 규모만 있습니다.")
+
+    st.divider()
+
+    # (2) 합격선: 기관별로 분리(이종 시험 혼합 경고)
+    st.markdown("**합격선 통계 — 기관별 분리** (서로 다른 필기 시험이라 직접 비교 주의)")
+    cs = ds["cut_stat"]
+    cc = st.columns(len(cs["기관별"]) + 1)
+    for col, (inst, d) in zip(cc, cs["기관별"].items()):
+        col.metric(inst.replace("부산", ""), f"{d['평균']}점",
+                   help=f"n={d['n']} · ±{d['표준편차']} · 범위 {d['범위']}")
+    cc[-1].metric("혼합 전체평균", f"{cs['전체평균']}점",
+                  help="기관 혼합값 — 참고용. 직접 비교 금지.")
+    st.warning(cs["주의"])
+
+    st.divider()
+
+    # (3) 직무별 데이터 양·결측 — '표본이 얕은 직무'를 정직하게 표시
+    st.markdown("**직무별 데이터 양·합격선 결측**")
+    jq = []
+    for j, s in ds["job_stats"].items():
+        jq.append(dict(직무=j, 경쟁률레코드=s["일반_n"],
+                       합격선보유=s["합격선n"],
+                       합격선기관="+".join(i.replace("부산", "") for i in s.get("합격선기관", [])) or "—",
+                       표본신뢰=("낮음" if s["일반_n"] < 5 else "보통" if s["일반_n"] < 10 else "양호")))
+    jq.sort(key=lambda d: -d["경쟁률레코드"])
+    qfig = go.Figure(go.Bar(
+        x=[d["경쟁률레코드"] for d in jq], y=[d["직무"] for d in jq], orientation="h",
+        marker_color=[GOOD if d["표본신뢰"] == "양호" else WARN if d["표본신뢰"] == "보통" else BAD for d in jq],
+        text=[f'{d["경쟁률레코드"]}건' for d in jq], textposition="outside"))
+    qfig.update_layout(title="직무별 경쟁률 레코드 수 (초록=양호·노랑=보통·빨강=표본부족<5)",
+                       height=380, margin=dict(l=10, r=40, t=50, b=10),
+                       plot_bgcolor="white", font=dict(family="Pretendard"))
+    st.plotly_chart(qfig, use_container_width=True)
+    st.markdown("**직무별 합격선 출처**")
+    for d in jq:
+        miss = "" if d["합격선보유"] else " · ⚠️ 합격선 없음"
+        st.markdown(f"- **{d['직무']}**: 경쟁률 {d['경쟁률레코드']}건 / 합격선 {d['합격선보유']}건"
+                    f"({d['합격선기관']}){miss}")
+
+    st.caption("출처: data.go.kr 공시데이터(교통·도시·관광·환경·시설). 발표 시 이 탭을 먼저 열어 "
+               "'무엇을 못 가졌는지'를 스스로 공개하면, 데이터 신뢰성 질문을 선제 방어할 수 있습니다.")

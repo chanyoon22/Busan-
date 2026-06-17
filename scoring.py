@@ -352,12 +352,27 @@ INTERVIEW_RUBRIC_BTO_CONTRACT = {
 INTERVIEW_PASS_CUT = 70
 
 
+def bonus_points_bto_contract(social: dict | None = None, stage_max: int = 100) -> dict:
+    """관광공사 일반계약직(제2026-42호) 전용 가점.
+       이 공고의 가점사항은 '취업보호(지원)대상자 5/10%'뿐이다. 장애인 가점 항목이
+       없으므로, 범용 bonus_points()(장애인 5% 포함)를 쓰면 안 된다(공고별 분리).
+       규칙: 가장 유리한 1개, 100점 만점의 40점 이상 득점자만, 가점합격률 상한 30%."""
+    social = social or {}
+    pct = int(social.get("취업지원대상자", 0) or 0)
+    if pct not in (5, 10):
+        pct = 0
+    notes = [f"취업지원대상자 {pct}% (보훈관계법령, 가장 유리한 1개 적용)"] if pct else []
+    return dict(가산비율=pct, 가산점=round(stage_max * pct / 100, 1), 근거=notes,
+                주의="이 공고는 장애인 가점 항목이 없음(취업지원대상자만). 타 공고 가점과 섞지 말 것.")
+
+
 def interview_score_bto_contract(raw_100, social: dict | None = None) -> dict:
     """면접 원점수(본인 추정, 0~100)와 가산 정보로 가점 포함 점수·컷 통과를 계산.
-       ※ 면접 원점수는 사용자가 가정한 값이며 '예측'이 아니다(공고 규정만 적용)."""
+       ※ 면접 원점수는 사용자가 가정한 값이며 '예측'이 아니다(공고 규정만 적용).
+       ※ 가점은 이 공고 전용 bonus_points_bto_contract(취업지원만)을 쓴다."""
     raw = _num(raw_100)
     raw = 0.0 if raw is None else max(0.0, min(100.0, raw))
-    b = bonus_points(social or {}, stage_max=100)        # 취업지원/장애인 가산비율
+    b = bonus_points_bto_contract(social, stage_max=100)   # 공고 전용(장애인 가점 없음)
     # 공고: 우대가점은 100점 만점의 40점 이상 득점자에게만 적용
     applied = b["가산점"] if raw >= 40 else 0.0
     final = round(raw + applied, 1)
@@ -370,7 +385,7 @@ def interview_score_bto_contract(raw_100, social: dict | None = None) -> dict:
         컷=INTERVIEW_PASS_CUT,
         컷통과=raw >= INTERVIEW_PASS_CUT,                  # 컷은 면접 원점수 기준
         주의="면접 원점수는 본인 추정 입력값(예측 아님). 70점 컷·가점 규칙만 공고 근거. "
-             "가점은 40점 이상 득점자에게만 적용되며, 최종 선발은 가점 포함 고득점순.",
+             "이 공고 가점은 취업지원대상자만(장애인 가점 없음). 최종 선발은 가점 포함 고득점순.",
     )
 
 
