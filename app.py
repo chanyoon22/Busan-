@@ -1,21 +1,27 @@
 """
-app.py — 부산 공공기관 커리어 로드맵 내비게이터 (v2)
-================================================
-v1 대비 핵심 수정
-  1) [비용/안정성] 프로필 입력을 st.form 으로 감싸 '제출' 시에만 추천·AI가
-     돈다. v1은 위젯을 만질 때마다 전체 리런 → Gemini가 연속 호출되어 요금
-     폭탄·429 위험이 있었다.
-  2) [신뢰] '하드코딩 가중치'를 슬라이더로 노출 → 사용자 조절형 시뮬레이터.
-  3) [정직성] 'AI 합격선 예측/MAE' 표현 제거. '합격선 통계(과거 평균±편차)'로
-     명명하고 제공기관·결측을 명시한다.
-  4) [신규] 직무별 '일반 vs 사회배려 전형' 경쟁률 갭을 시각화(사회배려는 가짜
-     직무가 아니라 전형 옵션임을 보여줌).
-  5) [성능] 무거운 ETL을 캐시. recommend는 캐시된 dataset을 주입받는다.
+app.py — 부산 공공기관 커리어 로드맵 내비게이터 (v3 · 3탭 재설계)
+================================================================
+v2(6탭) → v3(3탭) 재설계 핵심
+  [정체성] 제품을 '정규직 로드맵 / 데이터분석 / AI상담 / 인턴점수 / 계약직체커 /
+    데이터품질'의 6개 동급 기능으로 흩어 놓던 구조를 정리. 제품의 본체는
+    '내 전공 기준 준비 우선순위 로드맵'(탭1) 하나로 수렴한다.
+      · 탭1 내 로드맵      = 사용자 가치 (핵심, 화면의 70%)
+      · 탭2 추천 근거·품질  = 심사 방어 (경쟁률 차트 + 데이터 커버리지·합격선 한계)
+      · 탭3 더보기(부가도구) = 청년인턴 점수 + 관광 계약직 체커 (별도 공고 기반 계산기)
+
+  [가독성] 처음 들어온 1학년이 "뭐부터 눌러야 하지"를 겪지 않도록
+    첫 화면에 ①입력→②확인→③근거 3단계 안내 + '예측 아님' 한 줄을 고정.
+
+  [개인정보] 탭1 AI 로드맵이 자동으로 Gemini를 호출하던 흐름을 제거.
+    '동의하고 생성' 버튼을 눌렀을 때만 외부 API로 전송된다(고지와 동작 일치).
+    AI 상담은 별도 탭이 아니라 탭1 안의 선택 기능으로 내렸다.
+
+  [정직성] Streamlit은 서버에서 계산하는 구조라, 안내 문구를 '브라우저 안에서만'
+    → '서버 세션 안에서만(외부 AI로는 전송 안 함)'으로 정정.
 
 실행:  streamlit run app.py
 배포:  GitHub push → Streamlit Cloud (Secrets에 GEMINI_API_KEY)
 """
-import hashlib, json
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -35,9 +41,16 @@ st.markdown(f"""
   @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
   html, body, [class*="css"] {{ font-family:'Pretendard',sans-serif; }}
   .main {{ background:#f7f9fb; }}
-  .hero {{ border-left:5px solid {ACCENT}; padding:.2rem 0 .2rem 1rem; margin:.2rem 0 1rem; }}
+  .hero {{ border-left:5px solid {ACCENT}; padding:.2rem 0 .2rem 1rem; margin:.2rem 0 .8rem; }}
   .hero h1 {{ color:{INK}; font-size:1.7rem; font-weight:800; margin:0; letter-spacing:-.02em; }}
   .hero p  {{ color:{MUTED}; margin:.35rem 0 0; font-size:.98rem; }}
+  .howto {{ background:#fff; border:1px solid #e6edf3; border-radius:14px;
+            padding:.9rem 1.1rem; margin:.2rem 0 1rem;
+            box-shadow:0 1px 3px rgba(15,36,56,.05); }}
+  .howto .step {{ display:inline-block; min-width:1.4rem; height:1.4rem; line-height:1.4rem;
+                  text-align:center; background:{PRIMARY}; color:#fff; border-radius:50%;
+                  font-weight:800; font-size:.82rem; margin-right:.45rem; }}
+  .howto .row {{ font-size:.95rem; color:{INK}; margin:.25rem 0; }}
   .reccard {{ background:#fff; border:1px solid #e6edf3; border-radius:14px;
              padding:1.1rem 1.2rem; margin-bottom:.8rem;
              box-shadow:0 1px 3px rgba(15,36,56,.05); }}
@@ -50,16 +63,27 @@ st.markdown(f"""
   .tag {{ display:inline-block; font-size:.74rem; font-weight:700; padding:.12rem .5rem;
           border-radius:6px; margin-right:.3rem; }}
   .src {{ color:{MUTED}; font-size:.8rem; }}
+  .secthead {{ font-size:1.05rem; font-weight:800; color:{INK}; margin:.2rem 0 .1rem; }}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown(f"""
 <div class="hero">
   <h1>🧭 부산 공공기관 커리어 로드맵</h1>
-  <p>부산 공공기관 공개 채용데이터로,
-     <b>전공·전형별로 데이터상 유리한 직무와 준비 순서</b>를 설계합니다.
-     <span class="src">(경쟁률·합격선은 교통·도시공사 2기관, 신규채용 규모는 4기관,
-     채용정보는 3기관 — 커버리지는 탭6에 그대로 공개. 수치는 과거 통계이며 예측이 아닙니다)</span></p>
+  <p>부산 공공기관 채용 공시데이터로,
+     <b>내 전공에 데이터상 유리한 직무와 졸업까지 준비 순서</b>를 정리해 줍니다.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# 1학년도 바로 이해하도록 — 3단계 사용법 + '예측 아님' 한 줄을 첫 화면에 고정
+st.markdown(f"""
+<div class="howto">
+  <div class="row"><span class="step">1</span>왼쪽 사이드바에서 <b>학년·전공·자격·어학</b>을 입력하고 ‘제출’을 누르세요.</div>
+  <div class="row"><span class="step">2</span><b>‘내 로드맵’ 탭</b>에서 추천 직무 Top 3와 다음에 할 일을 확인하세요.</div>
+  <div class="row"><span class="step">3</span>근거가 궁금하면 <b>‘추천 근거·데이터 품질’ 탭</b>에서 실제 공시데이터 범위를 보세요.</div>
+  <div style="margin-top:.55rem;color:{ACCENT};font-size:.86rem;font-weight:700">
+    ※ 이 서비스는 합격 가능성을 예측하지 않습니다. 과거 공시데이터로 <u>준비 우선순위</u>를 정리하는 참고 도구입니다.
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -91,34 +115,37 @@ def _fmt_req(req: dict) -> str:
 # ───────────────────── 사이드바: 프로필 + 가중치 (st.form) ─────────────────────
 with st.sidebar:
     st.subheader("내 프로필")
+    st.caption("입력 후 아래 ‘제출’을 눌러야 추천이 계산됩니다.")
     with st.form("profile"):
         grade = st.select_slider("학년", options=[1, 2, 3, 4], value=2)
         major = st.selectbox("전공계열", list(rc.MAJOR_FIT.keys()),
                              index=len(rc.MAJOR_FIT) - 1)
-        certs = st.multiselect("보유 자격증", sc.CERT_MASTER)
+        certs = st.multiselect("보유 자격증 (없으면 비워두세요)", sc.CERT_MASTER)
 
-        st.markdown("**어학 성적** (보유한 것만 입력)")
+        st.markdown("**어학 성적** (있는 것만)")
         lang_test = st.selectbox("시험 종류", sc.LANG_TESTS)
         lang_val = st.text_input("점수/등급 (예: 토익 780, 오픽 IH)", value="")
 
         st.markdown("**거주지(주민등록 기준)**")
         region = st.selectbox("현재 주민등록 지역", sc.RESIDENCY_REGIONS)
-        social_v = st.selectbox("취업지원대상자 가점", [0, 5, 10],
-                                help="국가보훈부 증명서 비율(없으면 0)")
-        disabled = st.checkbox("장애인 등록")
 
-        st.markdown("**가중치 조절** (추천 기준을 직접 설계)")
-        w_fit = st.slider("전공 적합", 0.0, 1.0, 0.45, 0.05)
-        w_comp = st.slider("경쟁 여유", 0.0, 1.0, 0.35, 0.05)
-        w_size = st.slider("데이터 표본량(신뢰도)", 0.0, 1.0, 0.20, 0.05,
-                           help="실제 채용 인원 크기가 아니라, 그 직무의 경쟁률 추정에 쓰인 "
-                                "데이터 레코드 수입니다. 많을수록 추정이 안정적입니다.")
+        with st.expander("사회배려 전형 해당자만 (선택)"):
+            social_v = st.selectbox("취업지원대상자 가점", [0, 5, 10],
+                                    help="국가보훈부 증명서 비율(없으면 0)")
+            disabled = st.checkbox("장애인 등록")
 
-        submitted = st.form_submit_button("프로필 제출 / 다시 계산", use_container_width=True)
-    st.caption("입력은 저장되지 않습니다. 다만 AI 상담(탭3)을 쓰면 프로필이 외부 생성형 AI "
-               "API로 전송됩니다 — 아래 안내 참고. 제출해야 추천·AI가 실행됩니다.")
-    st.caption("⚠️ 개인정보: 장애·취업지원대상자 등 민감정보는 AI 상담을 켜지 않으면 외부로 "
-               "전송되지 않습니다. 추천·점수 계산은 모두 브라우저 세션 안에서만 처리됩니다.")
+        with st.expander("추천 기준 직접 조절 (선택 · 기본값 권장)"):
+            w_fit = st.slider("전공 적합", 0.0, 1.0, 0.45, 0.05)
+            w_comp = st.slider("경쟁 여유", 0.0, 1.0, 0.35, 0.05)
+            w_size = st.slider("데이터 표본량(신뢰도)", 0.0, 1.0, 0.20, 0.05,
+                               help="실제 채용 인원 크기가 아니라, 그 직무의 경쟁률 추정에 쓰인 "
+                                    "데이터 레코드 수입니다. 많을수록 추정이 안정적입니다.")
+
+        submitted = st.form_submit_button("프로필 제출 / 다시 계산", width="stretch")
+    st.caption("🔒 입력값(장애·취업지원대상자 등 민감정보 포함)은 추천·점수 계산 시 "
+               "서버 세션 안에서만 처리되며, 외부로 전송되지 않습니다. "
+               "단, ‘내 로드맵’ 탭에서 **‘AI 요약’ 버튼을 직접 누른 경우에만** "
+               "프로필이 외부 생성형 AI(Gemini)로 전송됩니다.")
 
 # 제출 전이면 기본 프로필로 1회만 계산(초기 화면용), 제출 시 갱신
 if submitted or "student" not in st.session_state:
@@ -134,22 +161,26 @@ if submitted or "student" not in st.session_state:
         가산={"취업지원대상자": social_v, "장애인": disabled})
     st.session_state.weights = weights
     st.session_state.recs = rc.recommend(st.session_state.student, weights=weights, ds=ds)
+    st.session_state.pop("ai_roadmap", None)   # 프로필 바뀌면 이전 AI 요약 무효화
 
 student = st.session_state.student
 recs = st.session_state.recs
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["🎯 내 직무 로드맵", "📊 채용 미스매치 진단",
-     "💬 AI 커리어 상담", "🎓 청년인턴 점수+체크리스트",
-     "📋 공고 적격 체커(관광공사 계약직)", "🗂 데이터 커버리지·품질"])
+tab1, tab2, tab3 = st.tabs(
+    ["🎯 내 로드맵", "📊 추천 근거·데이터 품질", "🧰 더보기 (공고·인턴 도구)"])
 
-# ───────────────────────── 탭 1 ─────────────────────────
+# ════════════════════════ 탭 1: 내 로드맵 (제품 본체) ════════════════════════
 with tab1:
     c1, c2 = st.columns([3, 2])
+
+    # ── 왼쪽: 추천 직무 카드 ──
     with c1:
-        st.markdown("##### 데이터가 추천하는 직무 (전공 지원범위 내)")
+        st.markdown('<div class="secthead">데이터가 추천하는 직무 (내 전공 지원범위 내)</div>',
+                    unsafe_allow_html=True)
+        st.caption("‘데이터 유리도’ = 전공적합 + 경쟁여유 + 표본량을 합친 **준비 우선순위 점수**"
+                   "입니다. 합격 가능성·예측이 아닙니다.")
         if not recs:
-            st.info("선택한 전공계열에 매칭되는 직무 데이터가 없습니다.")
+            st.info("선택한 전공계열에 매칭되는 직무 데이터가 없습니다. 다른 전공계열을 선택해 보세요.")
         for i, r in enumerate(recs, 1):
             comp = r["구성"]
             d = r["데이터"]
@@ -158,7 +189,7 @@ with tab1:
             social_tag = (f'<span class="tag" style="background:#fde8e1;color:{ACCENT}">사회배려 전형 갭 반영</span>'
                           if r["사회배려적용"] else "")
             cut_txt = (f"평균 합격선 {d['합격선평균']}점 (±{d['합격선표준편차']})"
-                       + (f" · {'+'.join(i.replace('부산','') for i in d.get('합격선기관',[]))} 혼합"
+                       + (f" · {'+'.join(x.replace('부산','') for x in d.get('합격선기관',[]))} 혼합"
                           if len(d.get('합격선기관', [])) > 1 else "")
                        if d['합격선평균'] else "합격선 공시 없음")
             st.markdown(f"""
@@ -181,24 +212,102 @@ with tab1:
               {f'<div style="font-size:.8rem;color:{ACCENT};margin-top:.4rem">★ {r["로드맵"]["사회배려안내"]}</div>' if r['로드맵']['사회배려안내'] else ''}
             </div>
             """, unsafe_allow_html=True)
-        st.caption("‘데이터 유리도’는 전공적합·경쟁여유·표본량을 가중합한 **준비 우선순위 "
-                   "시뮬레이션 점수**입니다. 실제 합격 가능성이나 합격 예측이 아닙니다. "
-                   "가중치는 사이드바에서 직접 조절합니다.")
+
+            # '왜 이 직무가 추천됐나' — 산식 투명 공개(접이식)
+            with st.expander(f"왜 ‘{r['직무']}’가 {i}순위인가요? (점수 계산 근거)"):
+                w = st.session_state.weights
+                st.markdown(
+                    f"- **전공적합 {comp['전공적합']:.2f}** × 가중치 {w['fit']:.2f}"
+                    f"{' — 블라인드 직무라 모든 전공에 1.00' if r['블라인드'] else ''}\n"
+                    f"- **경쟁여유 {comp['경쟁여유']:.2f}** × 가중치 {w['comp']:.2f} "
+                    f"— 일반전형 누적 경쟁률 {d['일반경쟁률']}:1 (낮을수록 점수↑)\n"
+                    f"- **표본량 {comp['표본량']:.2f}** × 가중치 {w['size']:.2f} "
+                    f"— 경쟁률 레코드가 많을수록 추정이 안정적\n"
+                    f"- 세 항목 가중합 → **데이터 유리도 {r['적합도']}점**")
+                st.caption("가중치는 사이드바 ‘추천 기준 직접 조절’에서 바꿀 수 있습니다. "
+                           "이 점수는 준비 우선순위 시뮬레이션이며 합격 예측이 아닙니다.")
+
+        # 1순위 직무 기준 다음 할 일 체크리스트(로드맵의 일부 → 탭1로 통합)
+        if recs:
+            st.divider()
+            st.markdown('<div class="secthead">✅ 다음에 할 일 (1순위 직무 기준)</div>',
+                        unsafe_allow_html=True)
+            st.caption("세션 체크리스트입니다. 새로고침하면 초기화됩니다(지속 저장은 로그인+DB 필요 — 미구현).")
+            top = recs[0]
+            steps = []
+            for c in top["로드맵"]["취득권장자격"]:
+                if c not in ("보유 자격으로 충분",):
+                    steps.append(("자격", f"{c} 취득"))
+            if top["로드맵"]["어학"]:
+                steps.append(("어학", top["로드맵"]["어학"]))
+            steps.append(("필기", top["로드맵"]["필기목표"]))
+
+            if "progress" not in st.session_state:
+                st.session_state.progress = {}
+            done_now = []
+            for idx, (kind, label) in enumerate(steps):
+                key = f"step_{idx}"
+                checked = st.checkbox(f"[{kind}] {label}",
+                                      value=st.session_state.progress.get(key, False),
+                                      key=f"chk_{idx}")
+                st.session_state.progress[key] = checked
+                if checked:
+                    done_now.append(label)
+            nxt = next((s for j, s in enumerate(steps)
+                        if not st.session_state.progress.get(f"step_{j}")), None)
+            pct = int(100 * len(done_now) / len(steps)) if steps else 0
+            st.progress(pct / 100, text=f"준비 진척률 {pct}%")
+            if nxt:
+                st.success(f"👉 지금 시작할 단계: **{nxt[1]}** ({nxt[0]})")
+            else:
+                st.success("로드맵 완주! 이제 각 기관 공고 모니터링 단계입니다.")
+
+    # ── 오른쪽: AI 요약 (자동호출 금지, 동의 버튼식) ──
     with c2:
-        st.markdown("##### AI 맞춤 로드맵")
+        st.markdown('<div class="secthead">AI 맞춤 로드맵 요약 (선택)</div>',
+                    unsafe_allow_html=True)
+        st.caption("위 추천 수치를 AI가 문장으로 정리해 줍니다. 핵심 추천은 AI 없이도 "
+                   "이미 왼쪽에 다 나와 있습니다.")
+        st.warning("🔒 버튼을 누르면 **내 프로필(학년·전공·자격·어학·거주지, 입력 시 "
+                   "장애·취업지원 여부)과 추천 결과가 외부 생성형 AI(Gemini)로 전송**됩니다. "
+                   "전송을 원치 않으면 누르지 마세요.")
 
-        @st.cache_data(show_spinner=False)
-        def cached_narrate(profile_key, recs_key):
-            return ai.narrate_roadmap(student, recs, ds)
+        if st.button("✅ 동의하고 AI 요약 생성", width="stretch"):
+            with st.spinner("AI가 추천 근거를 정리하는 중…"):
+                st.session_state.ai_roadmap = ai.narrate_roadmap(student, recs, ds)
 
-        pkey = hashlib.md5(json.dumps(student, ensure_ascii=False, default=str).encode()).hexdigest()
-        rkey = "|".join(r["직무"] for r in recs)
-        with st.spinner("로드맵 생성 중…"):
-            st.info(cached_narrate(pkey, rkey))
-        st.caption("AI는 위 공공데이터 수치와 공고 임용조건에만 근거해 서술합니다.")
+        if st.session_state.get("ai_roadmap"):
+            st.info(st.session_state.ai_roadmap)
+            st.caption("AI는 위 공공데이터 수치와 공고 임용조건에만 근거해 서술합니다.")
 
-# ───────────────────────── 탭 2: 미스매치 + 사회배려 갭 ─────────────────────────
+        st.divider()
+
+        # AI 상담도 별도 탭이 아니라 탭1 안의 선택 기능으로 축소
+        with st.expander("💬 추가로 AI에게 직접 질문하기 (선택 · 외부 전송)"):
+            st.caption('예: "전기직 일반전형 경쟁률은?" / "사무직 토익 몇 점 필요해?"')
+            if "chat" not in st.session_state:
+                st.session_state.chat = []
+            for role, msg in st.session_state.chat:
+                with st.chat_message(role):
+                    st.write(msg)
+            if q := st.chat_input("질문 입력 (전송 시 외부 AI로 프로필이 전송됩니다)"):
+                st.session_state.chat.append(("user", q))
+                with st.chat_message("user"):
+                    st.write(q)
+                with st.chat_message("assistant"):
+                    with st.spinner("…"):
+                        a = ai.chat(student, recs, q, ds=ds)
+                    st.write(a)
+                st.session_state.chat.append(("assistant", a))
+
+# ════════════════ 탭 2: 추천 근거·데이터 품질 (심사 방어) ════════════════
 with tab2:
+    st.markdown('<div class="secthead">이 추천이 어떤 데이터에 근거하는가</div>',
+                unsafe_allow_html=True)
+    st.info(ds["coverage"]["한줄정정"])
+
+    # (1) 직무별 경쟁률(미스매치)
+    st.markdown("**① 직무별 5년 가중 경쟁률 (일반전형)**")
     mm = [m for m in ds["mismatch"] if m["평균경쟁률"]]
     mm.sort(key=lambda m: m["평균경쟁률"])
     fig = go.Figure(go.Bar(
@@ -206,244 +315,47 @@ with tab2:
         marker_color=[class_color(m["분류"]) for m in mm],
         text=[f"{m['평균경쟁률']}:1" for m in mm], textposition="outside"))
     fig.update_layout(
-        title="직무별 5년 가중 경쟁률(일반전형) — 빨강=과경쟁·노랑=미달위험·초록=적정",
-        height=420, margin=dict(l=10, r=40, t=50, b=10),
+        title="빨강=과경쟁 · 노랑=미달위험 · 초록=적정",
+        height=380, margin=dict(l=10, r=40, t=40, b=10),
         plot_bgcolor="white", font=dict(family="Pretendard"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3 = st.columns(3)
     cs = ds["cut_stat"]
     k1.metric("경쟁률 레코드", f"{ds['meta']['경쟁률레코드']}건")
-    k2.metric("합격선 통계(평균±편차)", f"{cs['전체평균']}±{cs['전체표준편차']}",
-              help=f"제공기관 {', '.join(cs['제공기관'])} · n={cs['n']} · {cs['주의']}")
-    k3.metric("사회배려 전형 가중경쟁률", f"{ds['esg']['가중경쟁률']}:1")
-    k4.metric("사회배려 미달 건수", f"{ds['esg']['미달건수']}건",
-              help=f"표본 {ds['esg']['표본수']}건 중")
+    k2.metric("사회배려 전형 가중경쟁률", f"{ds['esg']['가중경쟁률']}:1",
+              help=f"표본 {ds['esg']['표본수']}건 · 미달 {ds['esg']['미달건수']}건")
+    k3.metric("합격선 통계(혼합·참고용)", f"{cs['전체평균']}±{cs['전체표준편차']}",
+              help=f"제공기관 {', '.join(cs['제공기관'])} · n={cs['n']}")
 
-    # 신규: 일반 vs 사회배려 전형 경쟁률 갭
-    st.markdown("##### 직무별 일반 vs 사회배려 전형 경쟁률 갭")
+    st.divider()
+
+    # (2) 일반 vs 사회배려 전형 갭
+    st.markdown("**② 직무별 일반 vs 사회배려 전형 경쟁률 갭**")
     gj = [(j, s["일반_가중경쟁률"], s["사회배려_가중경쟁률"])
           for j, s in ds["job_stats"].items()
           if s["일반_가중경쟁률"] and s["사회배려_가중경쟁률"]]
     gj.sort(key=lambda t: -t[1])
-    gfig = go.Figure()
-    gfig.add_trace(go.Bar(name="일반전형", y=[t[0] for t in gj],
-                          x=[t[1] for t in gj], orientation="h", marker_color=MUTED))
-    gfig.add_trace(go.Bar(name="사회배려전형", y=[t[0] for t in gj],
-                          x=[t[2] for t in gj], orientation="h", marker_color=ACCENT))
-    gfig.update_layout(barmode="group", height=360,
-                       margin=dict(l=10, r=10, t=10, b=10),
-                       plot_bgcolor="white", font=dict(family="Pretendard"))
-    st.plotly_chart(gfig, use_container_width=True)
-    st.caption("사회배려(장애·보훈·취업지원)는 '직무'가 아니라 '전형'입니다. "
-               "같은 직무라도 사회배려 전형의 경쟁률이 크게 낮습니다.")
-
-    st.markdown("##### 신규채용 추세 (정규직 일반)")
-    tfig = go.Figure()
-    for inst, rows in ds["hire_trend"].items():
-        tfig.add_trace(go.Scatter(x=[r["연도"] for r in rows],
-                                  y=[r["정규직일반"] for r in rows],
-                                  mode="lines+markers", name=inst))
-    tfig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                       plot_bgcolor="white", font=dict(family="Pretendard"))
-    st.plotly_chart(tfig, use_container_width=True)
-    st.caption("출처: data.go.kr 신규채용 공시 — 부산교통·도시·환경·시설 4기관 정규직(일반). "
-               "관광공사는 신규채용 규모 공시가 없어 제외. 5년 누적 구조 경향이며 "
-               "당해연도 채용규모는 각 기관 공고로 재확인 필요.")
-
-# ───────────────────────── 탭 3: AI 상담 ─────────────────────────
-with tab3:
-    st.markdown("##### 무엇이든 물어보세요 (데이터·공고 근거로 답합니다)")
-    st.warning("🔒 이 탭에서 질문을 보내면 **입력한 프로필(학년·전공·자격·어학·거주지, "
-               "그리고 입력했다면 장애·취업지원대상자 여부)과 추천 결과가 외부 생성형 AI "
-               "API(Gemini)로 전송**됩니다. 민감정보 전송을 원치 않으면 이 탭을 쓰지 마세요. "
-               "탭1·2·4·5의 계산은 외부 전송 없이 세션 안에서만 처리됩니다.")
-    st.caption('예: "전기직 일반전형 경쟁률은?" / "사무직 토익 몇 점 필요해?" / "사회배려 전형이 얼마나 유리해?"')
-    if "chat" not in st.session_state:
-        st.session_state.chat = []
-    for role, msg in st.session_state.chat:
-        with st.chat_message(role):
-            st.write(msg)
-    if q := st.chat_input("질문 입력"):
-        st.session_state.chat.append(("user", q))
-        with st.chat_message("user"):
-            st.write(q)
-        with st.chat_message("assistant"):
-            with st.spinner("…"):
-                a = ai.chat(student, recs, q, ds=ds)
-            st.write(a)
-        st.session_state.chat.append(("assistant", a))
-
-# ───────────────── 탭 4: 청년인턴 서류점수 시뮬레이터 + 성장추적 ─────────────────
-with tab4:
-    st.markdown("##### 🎓 청년인턴 서류전형 점수 시뮬레이터")
-    st.caption("출처: 부산교통공사 제2026-245호 공고 — 실제 정량 가점 테이블·가산점 규칙. "
-               "여기 점수는 공고가 명시한 범위에서만 계산됩니다(추정 아님).")
-
-    # (1) 정량 점수 — 사이드바에서 입력한 자격증 기반
-    quant = sc.intern_quant_score(student.get("보유자격", []))
-    bonus = sc.bonus_points(student.get("가산", {}), stage_max=100)
-    res = sc.residency_ok(student.get("거주지", ""))
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("정량 점수(자격증)", f"{quant['정량점수']} / {quant['만점']}")
-    c2.metric("가산 비율", f"+{bonus['가산비율']}%")
-    c3.metric("거주지 요건", "충족" if res["충족"] else "미충족")
-
-    st.markdown("**항목별 정량 득점** (항목 내 최고 자격 1개만 인정 · 동일항목 중복불가)")
-    for item, d in quant["세부"].items():
-        label = d["자격"] or "해당 자격 없음"
-        st.markdown(f"- **{item}**: {label} → {d['점수']}점")
-    if bonus["근거"]:
-        st.markdown("**가산점 근거**: " + " / ".join(bonus["근거"]))
-    if not res["충족"]:
-        st.warning(res["설명"])
-    st.caption(res["주의"])
-
-    # 정성평가는 자기소개서 등급이라 자동계산 불가 — 정직하게 안내
-    st.info("정성평가(45점: 자기소개·지원동기·직무목표, 등급 S15~D7)는 자기소개서 "
-            "정성평가라 자동 산출이 불가합니다. 위 정량 점수는 '내가 통제 가능한 부분'입니다.")
+    if gj:
+        gfig = go.Figure()
+        gfig.add_trace(go.Bar(name="일반전형", y=[t[0] for t in gj],
+                              x=[t[1] for t in gj], orientation="h", marker_color=MUTED))
+        gfig.add_trace(go.Bar(name="사회배려전형", y=[t[0] for t in gj],
+                              x=[t[2] for t in gj], orientation="h", marker_color=ACCENT))
+        gfig.update_layout(barmode="group", height=320,
+                           margin=dict(l=10, r=10, t=10, b=10),
+                           plot_bgcolor="white", font=dict(family="Pretendard"))
+        st.plotly_chart(gfig, width="stretch")
+    st.caption("사회배려(장애·보훈·취업지원)는 ‘직무’가 아니라 ‘전형’입니다. "
+               "같은 직무라도 사회배려 전형 경쟁률이 크게 낮습니다. "
+               "다만 장애·보훈·취업지원은 법적으로 다른 집단이라, 실제 지원 가능 여부는 "
+               "공고별 응시자격을 반드시 확인하세요.")
 
     st.divider()
 
-    # (2) 로드맵 체크리스트 (세션 기반 — '성장추적'이라 부르지 않음)
-    st.markdown("##### ✅ 로드맵 체크리스트 (시뮬레이터)")
-    st.caption("⚠️ 이건 지속 '성장추적' 기능이 아니라 **세션 체크리스트**입니다. 새로고침하면 "
-               "초기화됩니다. 월 단위 추적·재방문 불러오기는 로그인+DB가 있어야 가능하며 "
-               "현재는 미구현(로드맵 단계)입니다. 발표 시 '추적'이라 과장하지 않습니다.")
-
-    # 1순위 직무 로드맵을 단계 체크리스트로 변환
-    if recs:
-        top = recs[0]
-        steps = []
-        for c in top["로드맵"]["취득권장자격"]:
-            if c not in ("보유 자격으로 충분",):
-                steps.append(("자격", f"{c} 취득"))
-        if top["로드맵"]["어학"]:
-            steps.append(("어학", top["로드맵"]["어학"]))
-        steps.append(("필기", top["로드맵"]["필기목표"]))
-
-        if "progress" not in st.session_state:
-            st.session_state.progress = {}
-        done_now = []
-        for i, (kind, label) in enumerate(steps):
-            key = f"step_{i}"
-            checked = st.checkbox(f"[{kind}] {label}", value=st.session_state.progress.get(key, False))
-            st.session_state.progress[key] = checked
-            if checked:
-                done_now.append(label)
-
-        # 다음 액션 제안: 첫 미완료 단계
-        nxt = next((s for i, s in enumerate(steps)
-                    if not st.session_state.progress.get(f"step_{i}")), None)
-        pct = int(100 * len(done_now) / len(steps)) if steps else 0
-        st.progress(pct / 100, text=f"로드맵 진척률 {pct}%")
-        if nxt:
-            st.success(f"👉 지금 켤 단계: **{nxt[1]}** ({nxt[0]})")
-        else:
-            st.balloons()
-            st.success("로드맵 완주! 공고 모니터링 단계로 넘어가세요.")
-    else:
-        st.info("사이드바에서 전공을 선택하고 제출하면 단계가 생성됩니다.")
-
-    with st.expander("성장추적을 '진짜'로 만들려면 — 솔직한 한계와 다음 단계"):
-        st.markdown(
-            "- **지금 한계**: Streamlit Cloud는 로그인이 없어 사용자별 진척이 세션이 끝나면 "
-            "사라집니다. '이번 달 토익 750 달성 → 다음 단계' 같은 월 단위 추적은 불가합니다.\n"
-            "- **현실적 업그레이드 경로**: ① 간단한 이메일 로그인(streamlit-authenticator) + "
-            "② Google Sheets나 SQLite/Supabase에 진척 저장 → 재방문 시 불러오기. "
-            "이 구조를 붙이면 비로소 '내비게이터(지속 안내)'가 됩니다.\n"
-            "- **공모전 발표 팁**: 현재 버전은 '계산기→로드맵 변환'까지 구현, "
-            "'지속 추적'은 로드맵으로 제시하면 과장 없이 성숙도를 보여줄 수 있습니다.")
-
-# ───────────────── 탭 5: 공고 적격 체커 (관광공사 일반계약직 2026-42호) ─────────────────
-with tab5:
-    P = sc.TOURISM_CONTRACT_2026_42
-    st.markdown(f"##### 📋 {P['공고']}")
-    st.caption(f"출처: {P['출처']} · 고용형태: {P['고용형태']} · 계약기간 {P['계약기간']} · "
-               f"전형: {P['전형']} · 총 {P['총원']}명")
-
-    # 이 화면의 존재 이유: 글로벌 환산표가 아니라 '공고 원문 컷'으로 판정한다.
-    st.info("이 체커는 어학을 환산표로 추정하지 않고, **공고가 명시한 분야별 시험 컷**으로 "
-            "직접 적격 여부를 판정합니다. (같은 TOEIC라도 공고마다 타 시험 컷이 다르기 때문)")
-
-    lang_raw = student.get("어학원본", {})
-    if not lang_raw:
-        st.warning("사이드바에서 어학 성적을 입력하면 분야별 적격 여부가 자동 판정됩니다. "
-                   "(예: 시험 종류 '토익(TOEIC)', 점수 '790')")
-
-    st.markdown("**분야별 적격 판정** (어학요건은 한 시험만 충족해도 됨)")
-    for field in P["분야"]:
-        r = sc.field_eligibility(P, field, lang_raw)
-        req = r["어학요건"]
-        req_txt = _fmt_req(req)
-
-        if not lang_raw and req:
-            badge, color = "어학 입력 필요", MUTED
-        elif r["어학"]["적격"]:
-            badge, color = "응시 가능", GOOD
-        else:
-            badge, color = "응시 불가(어학 미달)", BAD
-
-        st.markdown(f"""
-        <div class="reccard">
-          <span class="scorepill" style="background:{color}">{badge}</span>
-          <div class="track" style="font-size:1.05rem">{field}</div>
-          <div style="font-size:.83rem;color:{MUTED};margin-top:.2rem">
-            선발 {r['인원']}명 · 근무지 {r['근무지']}</div>
-          <div style="font-size:.85rem;color:{INK};margin-top:.5rem">
-            🗣 어학요건: {req_txt}<br>
-            ▸ 판정: {r['어학']['사유']}<br>
-            ▸ 가점 적용: {r['가점적용']['적용']} — {r['가점적용']['설명']}
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.divider()
-
-    # 면접 배점 + 점수 시뮬레이터
-    st.markdown("##### 🎤 면접 배점표 & 점수 시뮬레이터")
-    st.caption("출처: 공고 붙임 면접심사 평가기준표. 면접 100점, 합격: 70점 이상자 중 고득점순.")
-
-    cols = st.columns(2)
-    rubric = sc.INTERVIEW_RUBRIC_BTO_CONTRACT
-    for col, (cat, items) in zip(cols, rubric.items()):
-        with col:
-            st.markdown(f"**{cat}**")
-            for name, pt in items.items():
-                st.markdown(f"- {name}: {pt}점")
-
-    st.markdown("**면접 점수 시뮬레이션** (원점수는 본인 추정값 — 예측 아님)")
-    raw = st.number_input("예상 면접 원점수 (0~100)", min_value=0, max_value=100,
-                          value=72, step=1)
-    sim = sc.interview_score_bto_contract(raw, student.get("가산", {}))
-    s1, s2, s3 = st.columns(3)
-    s1.metric("면접 원점수", f"{sim['면접원점수']}")
-    s2.metric("가점 적용", f"+{sim['가산점적용']}")
-    s3.metric("70점 컷", "통과" if sim["컷통과"] else "미달")
-    if sim["가산근거"]:
-        st.markdown("**가점 근거**: " + " / ".join(sim["가산근거"]))
-    st.markdown(f"최종(가점 포함, 정렬용) **{sim['최종점수']}점** — "
-                + ("70점 컷 통과" if sim["컷통과"] else
-                   "⚠️ 면접 원점수가 70점 미만이라 가점을 받아도 컷 미달"))
-    st.caption(sim["주의"])
-
-    with st.expander("이 공고를 시스템에 넣은 이유 — 어학 환산표의 함정"):
-        st.markdown(
-            "- 이 공고는 **TOEIC 800 = TOEFL 69 = New TEPS 228**로 명시합니다.\n"
-            "- 그런데 같은 관광공사 '일반직' 공고는 **TOEIC 800 = TOEFL 91 = TEPS 650**입니다.\n"
-            "- 즉 **동일 기관·동일 TOEIC라도 공고에 따라 타 시험 컷이 크게 다릅니다.**\n"
-            "- 그래서 이 체커는 글로벌 환산표(`LANG_EQUIV`)로 '충족'을 추정하지 않고, "
-            "공고가 적은 시험별 컷을 직접 비교합니다. (지어내지 않는다 — 1원칙)")
-
-# ───────────────── 탭 6: 데이터 커버리지·품질 대시보드 ─────────────────
-with tab6:
-    st.markdown("##### 🗂 데이터 커버리지·품질 (이 제품이 실제로 쓰는 데이터의 한계 공개)")
+    # (3) 데이터 커버리지 매트릭스
+    st.markdown("**③ 데이터 커버리지 — 무엇을 어느 기관까지 실제로 쓰는가**")
     cov = ds["coverage"]
-    st.info(cov["한줄정정"])
-
-    # (1) 커버리지 매트릭스 — 어떤 데이터가 어느 기관까지 있는가
-    st.markdown("**커버리지 매트릭스** — 항목별로 실제 보유 기관")
     INSTS = ["부산교통공사", "부산도시공사", "부산관광공사", "부산환경공단", "부산시설공단"]
     rows_cov = [
         ("경쟁률(직무×전형)", cov["경쟁률"]["기관"]),
@@ -463,46 +375,133 @@ with tab6:
         body += f"<tr><td style='padding:.3rem .6rem;color:{INK}'>{name}</td>{cells}</tr>"
     st.markdown(f"<table style='border-collapse:collapse;font-size:.86rem'>{head}{body}</table>",
                 unsafe_allow_html=True)
-    st.caption("● 보유 / ○ 없음. 경쟁률·합격선은 교통·도시 2기관에만 존재합니다. "
-               "관광공사는 채용정보만, 환경·시설공단은 신규채용 규모만 있습니다.")
+    st.caption("● 보유 / ○ 없음. 경쟁률·합격선은 교통·도시 2기관에만 있습니다.")
 
     st.divider()
 
-    # (2) 합격선: 기관별로 분리(이종 시험 혼합 경고)
-    st.markdown("**합격선 통계 — 기관별 분리** (서로 다른 필기 시험이라 직접 비교 주의)")
-    cs = ds["cut_stat"]
+    # (4) 합격선 기관별 분리(이종 시험 경고)
+    st.markdown("**④ 필기 합격선 — 기관별 분리** (시험 구성이 달라 직접 비교 주의)")
     cc = st.columns(len(cs["기관별"]) + 1)
-    for col, (inst, d) in zip(cc, cs["기관별"].items()):
-        col.metric(inst.replace("부산", ""), f"{d['평균']}점",
-                   help=f"n={d['n']} · ±{d['표준편차']} · 범위 {d['범위']}")
+    for col, (inst, dd) in zip(cc, cs["기관별"].items()):
+        col.metric(inst.replace("부산", ""), f"{dd['평균']}점",
+                   help=f"n={dd['n']} · ±{dd['표준편차']} · 범위 {dd['범위']}")
     cc[-1].metric("혼합 전체평균", f"{cs['전체평균']}점",
                   help="기관 혼합값 — 참고용. 직접 비교 금지.")
     st.warning(cs["주의"])
 
     st.divider()
 
-    # (3) 직무별 데이터 양·결측 — '표본이 얕은 직무'를 정직하게 표시
-    st.markdown("**직무별 데이터 양·합격선 결측**")
+    # (5) 직무별 표본량·결측
+    st.markdown("**⑤ 직무별 데이터 양** (표본 얕은 직무 정직 표시)")
     jq = []
     for j, s in ds["job_stats"].items():
         jq.append(dict(직무=j, 경쟁률레코드=s["일반_n"],
-                       합격선보유=s["합격선n"],
-                       합격선기관="+".join(i.replace("부산", "") for i in s.get("합격선기관", [])) or "—",
                        표본신뢰=("낮음" if s["일반_n"] < 5 else "보통" if s["일반_n"] < 10 else "양호")))
     jq.sort(key=lambda d: -d["경쟁률레코드"])
     qfig = go.Figure(go.Bar(
         x=[d["경쟁률레코드"] for d in jq], y=[d["직무"] for d in jq], orientation="h",
         marker_color=[GOOD if d["표본신뢰"] == "양호" else WARN if d["표본신뢰"] == "보통" else BAD for d in jq],
         text=[f'{d["경쟁률레코드"]}건' for d in jq], textposition="outside"))
-    qfig.update_layout(title="직무별 경쟁률 레코드 수 (초록=양호·노랑=보통·빨강=표본부족<5)",
-                       height=380, margin=dict(l=10, r=40, t=50, b=10),
+    qfig.update_layout(title="초록=양호 · 노랑=보통 · 빨강=표본부족(<5건)",
+                       height=360, margin=dict(l=10, r=40, t=40, b=10),
                        plot_bgcolor="white", font=dict(family="Pretendard"))
-    st.plotly_chart(qfig, use_container_width=True)
-    st.markdown("**직무별 합격선 출처**")
-    for d in jq:
-        miss = "" if d["합격선보유"] else " · ⚠️ 합격선 없음"
-        st.markdown(f"- **{d['직무']}**: 경쟁률 {d['경쟁률레코드']}건 / 합격선 {d['합격선보유']}건"
-                    f"({d['합격선기관']}){miss}")
+    st.plotly_chart(qfig, width="stretch")
 
-    st.caption("출처: data.go.kr 공시데이터(교통·도시·관광·환경·시설). 발표 시 이 탭을 먼저 열어 "
-               "'무엇을 못 가졌는지'를 스스로 공개하면, 데이터 신뢰성 질문을 선제 방어할 수 있습니다.")
+    st.divider()
+    st.markdown("**⑥ 신규채용 추세 (정규직 일반)**")
+    tfig = go.Figure()
+    for inst, rows in ds["hire_trend"].items():
+        tfig.add_trace(go.Scatter(x=[r["연도"] for r in rows],
+                                  y=[r["정규직일반"] for r in rows],
+                                  mode="lines+markers", name=inst))
+    tfig.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10),
+                       plot_bgcolor="white", font=dict(family="Pretendard"))
+    st.plotly_chart(tfig, width="stretch")
+    st.caption("출처: data.go.kr 신규채용 공시. 5년 누적 구조 경향이며 당해연도 규모는 공고로 재확인.")
+
+# ════════════════ 탭 3: 더보기 — 공고·인턴 부가도구 ════════════════
+with tab3:
+    st.caption("⚠️ 이 탭은 **특정 공고 기준 계산기**로, 핵심 추천 로드맵(탭1)과는 별도입니다. "
+               "공고가 바뀌면 값이 달라질 수 있습니다.")
+
+    sub1, sub2 = st.tabs(["🎓 청년인턴 서류점수", "📋 관광공사 계약직 적격 체커"])
+
+    # ── 청년인턴 서류점수 ──
+    with sub1:
+        st.markdown('<div class="secthead">청년인턴 서류전형 점수 시뮬레이터</div>',
+                    unsafe_allow_html=True)
+        st.caption("출처: 부산교통공사 제2026-245호 공고 — 공고가 명시한 정량 가점 범위에서만 계산(추정 아님).")
+        quant = sc.intern_quant_score(student.get("보유자격", []))
+        bonus = sc.bonus_points(student.get("가산", {}), stage_max=100)
+        res = sc.residency_ok(student.get("거주지", ""))
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("정량 점수(자격증)", f"{quant['정량점수']} / {quant['만점']}")
+        c2.metric("가산 비율", f"+{bonus['가산비율']}%")
+        c3.metric("거주지 요건", "충족" if res["충족"] else "미충족")
+
+        st.markdown("**항목별 정량 득점** (항목 내 최고 자격 1개만 인정)")
+        for item, dd in quant["세부"].items():
+            label = dd["자격"] or "해당 자격 없음"
+            st.markdown(f"- **{item}**: {label} → {dd['점수']}점")
+        if bonus["근거"]:
+            st.markdown("**가산점 근거**: " + " / ".join(bonus["근거"]))
+        if not res["충족"]:
+            st.warning(res["설명"])
+        st.caption(res["주의"])
+        st.info("정성평가(45점: 자기소개·지원동기·직무목표)는 자기소개서 평가라 자동 산출 불가. "
+                "위 정량 점수는 ‘내가 통제 가능한 부분’입니다.")
+
+    # ── 관광공사 계약직 적격 체커 ──
+    with sub2:
+        P = sc.TOURISM_CONTRACT_2026_42
+        st.markdown(f'<div class="secthead">{P["공고"]}</div>', unsafe_allow_html=True)
+        st.caption(f"출처: {P['출처']} · {P['고용형태']} · 계약 {P['계약기간']} · "
+                   f"전형 {P['전형']} · 총 {P['총원']}명")
+        st.info("이 체커는 어학을 환산표로 추정하지 않고, **공고가 명시한 분야별 시험 컷**으로 "
+                "직접 적격 여부를 판정합니다(같은 TOEIC라도 공고마다 타 시험 컷이 다르기 때문).")
+
+        lang_raw = student.get("어학원본", {})
+        if not lang_raw:
+            st.warning("사이드바에서 어학 성적을 입력하면 분야별 적격 여부가 자동 판정됩니다.")
+
+        st.markdown("**분야별 적격 판정** (어학요건은 한 시험만 충족해도 됨)")
+        for field in P["분야"]:
+            r = sc.field_eligibility(P, field, lang_raw)
+            req_txt = _fmt_req(r["어학요건"])
+            if not lang_raw and r["어학요건"]:
+                badge, color = "어학 입력 필요", MUTED
+            elif r["어학"]["적격"]:
+                badge, color = "응시 가능", GOOD
+            else:
+                badge, color = "응시 불가(어학 미달)", BAD
+            st.markdown(f"""
+            <div class="reccard">
+              <span class="scorepill" style="background:{color}">{badge}</span>
+              <div class="track" style="font-size:1.05rem">{field}</div>
+              <div style="font-size:.83rem;color:{MUTED};margin-top:.2rem">
+                선발 {r['인원']}명 · 근무지 {r['근무지']}</div>
+              <div style="font-size:.85rem;color:{INK};margin-top:.5rem">
+                🗣 어학요건: {req_txt}<br>
+                ▸ 판정: {r['어학']['사유']}<br>
+                ▸ 가점 적용: {r['가점적용']['적용']} — {r['가점적용']['설명']}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.divider()
+        st.markdown("**🎤 면접 점수 시뮬레이션** (원점수는 본인 추정값 — 예측 아님)")
+        st.caption("출처: 공고 붙임 면접심사 평가기준표. 면접 100점, 합격: 70점 이상자 중 고득점순.")
+        raw = st.number_input("예상 면접 원점수 (0~100)", min_value=0, max_value=100,
+                              value=72, step=1)
+        sim = sc.interview_score_bto_contract(raw, student.get("가산", {}))
+        s1, s2, s3 = st.columns(3)
+        s1.metric("면접 원점수", f"{sim['면접원점수']}")
+        s2.metric("가점 적용", f"+{sim['가산점적용']}")
+        s3.metric("70점 컷", "통과" if sim["컷통과"] else "미달")
+        if sim["가산근거"]:
+            st.markdown("**가점 근거**: " + " / ".join(sim["가산근거"]))
+        st.markdown(f"최종(가점 포함, 정렬용) **{sim['최종점수']}점** — "
+                    + ("70점 컷 통과" if sim["컷통과"] else
+                       "⚠️ 면접 원점수가 70점 미만이라 가점을 받아도 컷 미달"))
+        st.caption(sim["주의"])

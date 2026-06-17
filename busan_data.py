@@ -252,7 +252,15 @@ def load_hire_trend():
     specs = [("부산교통공사", "humetro_hire"), ("부산도시공사", "bmc_hire"),
              ("부산환경공단", "eco_hire"), ("부산시설공단", "fac_hire")]
     for inst, key in specs:
-        rows = _read_csv(_path(key))[1:]
+        # [안정성] 선택 데이터(환경·시설공단 등)가 배포 폴더에 없을 수 있다.
+        # 파일이 없으면 그 기관만 건너뛰고, 앱 전체가 죽지 않게 한다.
+        path = _path(key)
+        if not os.path.exists(path):
+            continue
+        try:
+            rows = _read_csv(path)[1:]
+        except Exception:
+            continue
         series = []
         for r in rows:
             if not r or not r[0]:
@@ -274,9 +282,15 @@ def _classify(ratio):
     return "적정"
 
 def _weighted_ratio(records):
-    """가중 경쟁률 = 총지원 / 총선발. (단순평균의 소규모 공고 왜곡 제거)"""
-    sel = sum(x["선발"] for x in records if x["선발"] and x["지원"])
-    app = sum(x["지원"] for x in records if x["선발"] and x["지원"])
+    """가중 경쟁률 = 총지원 / 총선발. (단순평균의 소규모 공고 왜곡 제거)
+
+    [버그 수정] 과거엔 `if x["선발"] and x["지원"]` 조건이라 지원자 0명 공고가
+    Falsy로 빠졌다. 미달·저경쟁을 진단하는 제품에서 0지원 공고를 빼면 경쟁률이
+    실제보다 높게 나온다 → 선발 인원이 있으면(>0) 지원 0명도 포함한다."""
+    valid = [x for x in records
+             if x["선발"] is not None and x["지원"] is not None and x["선발"] > 0]
+    sel = sum(x["선발"] for x in valid)
+    app = sum(x["지원"] for x in valid)
     return round(app / sel, 1) if sel else None
 
 
@@ -287,7 +301,9 @@ def build_dataset():
     # (직무 × 전형) 버킷
     bucket = defaultdict(list)              # (직무, 전형) -> [rec]
     for x in rate:
-        if x["경쟁률"] or (x["선발"] and x["지원"]):
+        # [버그 수정] Truthy 조건은 지원=0 / 경쟁률=0.0 공고를 누락시킨다.
+        # 선발·지원이 둘 다 기록돼 있으면(0 포함) 포함하고, 아니면 원문 경쟁률로 보강.
+        if (x["선발"] is not None and x["지원"] is not None) or x["경쟁률"] is not None:
             bucket[(x["직무"], x["전형"])].append(x)
 
     # 1) 직무별 일반전형 진단(추천의 기준) + 사회배려 갭
