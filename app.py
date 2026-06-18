@@ -448,7 +448,7 @@ with tab2:
 with tab3:
     st.caption("⚠️ 여기는 특정 공고 기준 계산기예요. 핵심 추천(탭1)과는 별개고, "
                "공고가 바뀌면 값도 달라져요.")
-    sub1, sub2 = st.tabs(["🎓 청년인턴 점수", "📋 관광공사 계약직 체커"])
+    sub1, sub2, sub3 = st.tabs(["🎓 청년인턴 점수", "🏢 정규직 가산 계산", "📋 관광공사 계약직 체커"])
 
     with sub1:
         st.markdown('<div class="sect">청년인턴 서류 점수 계산기</div>', unsafe_allow_html=True)
@@ -469,6 +469,31 @@ with tab3:
         st.caption("자기소개서 정성평가(45점)는 자동 계산이 안 돼요. 위는 ‘내가 바꿀 수 있는 부분’이에요.")
 
     with sub2:
+        st.markdown('<div class="sect">정규직 필기 가산 계산기</div>', unsafe_allow_html=True)
+        st.caption("출처: 교통공사 제2025-186호 / 시설공단 제2024-98호 — 검증된 가점 규칙만 적용. "
+                   "합격 예측이 아니라 '필기 만점 대비 가산 비율'이에요.")
+        inst = st.radio("기관 (가점율이 달라요)", ["부산교통공사", "부산시설공단"],
+                        horizontal=True, key="reg_inst")
+        reg_track = st.selectbox("직무", [j for j in rc.TRACK_PREP if j != "청년인턴"],
+                                 index=([j for j in rc.TRACK_PREP if j != "청년인턴"]
+                                        .index(recs[0]["직무"])
+                                        if recs[0]["직무"] in rc.TRACK_PREP else 0),
+                                 key="reg_track")
+        reg = sc.regular_bonus_score(reg_track, student.get("보유자격", []),
+                                     student.get("가산", {}), institution=inst)
+        c1, c2 = st.columns([1, 2])
+        c1.metric("필기 가산 비율", f"+{reg['가산비율']}%")
+        with c2:
+            if reg["근거"]:
+                st.markdown("**적용 내역**: " + " + ".join(reg["근거"]))
+            else:
+                st.markdown("적용 가능한 가산이 없어요. (해당 자격증·전형 보유 시 반영)")
+        if inst == "부산교통공사" and student.get("가산", {}).get("장애인"):
+            st.info("참고: 같은 장애인 가점도 교통공사 5% vs 시설공단 3%로 달라요. "
+                    "기관을 바꿔 비교해 보세요.")
+        st.caption(reg["주의"])
+
+    with sub3:
         P = sc.TOURISM_CONTRACT_2026_42
         st.markdown(f'<div class="sect">{P["공고"]}</div>', unsafe_allow_html=True)
         st.caption(f"{P['고용형태']} · 계약 {P['계약기간']} · 총 {P['총원']}명")
