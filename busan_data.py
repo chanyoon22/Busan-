@@ -297,6 +297,50 @@ def _classify(ratio):
     if ratio < 5:   return "미달위험"
     return "적정"
 
+def _confidence(records):
+    """이 (직무×전형) 셀의 경쟁률을 '얼마나 믿어도 되나'를 정직하게 산출한다.
+    raw 표본수만으로는 부족하다 — 가중경쟁률이 단일 대형공고에 끌려가면 표본이
+    많아도 '사실상 1~2개 공고'이기 때문. 그래서 3개를 함께 본다:
+      1) 표본n         : 셀에 들어간 공고 건수
+      2) 출처기관수     : 교통/도시 중 몇 곳에서 왔나(합격선 이종시험 혼합 경보용)
+      3) 최대공고집중도  : 가장 큰 공고 1개가 총지원자에서 차지하는 비중(0~1).
+                         높을수록 '평균'이 그 공고 하나를 의미함.
+    등급은 점수에 반영하지 않는다 — 사용자에게 '이 숫자를 얼마나 믿을지' 알리는 라벨."""
+    valid = [x for x in records
+             if x["선발"] is not None and x["지원"] is not None and x["선발"] > 0]
+    n = len(valid)
+    insts = sorted({x["기관"] for x in valid})
+    yrs = sorted({x["연도"] for x in valid if x["연도"]})
+    total_app = sum((x["지원"] or 0) for x in valid)
+    max_app = max((x["지원"] or 0) for x in valid) if valid else 0
+    concentration = round(max_app / total_app, 2) if total_app else None
+
+    # 등급 결정: 표본수 기준 → 집중도 높으면 하향
+    if n < 5:
+        grade = "낮음"
+    elif n < 10:
+        grade = "보통"
+    else:
+        grade = "양호"
+    if concentration is not None:
+        if concentration >= 0.55 and grade == "양호":
+            grade = "보통"          # 표본 많아도 한 공고가 절반 이상이면 사실상 1공고
+        if concentration >= 0.70:
+            grade = "낮음"          # 한 공고가 70%+면 '평균'이라 부르기 어렵다
+
+    return dict(
+        표본n=n,
+        출처기관수=len(insts),
+        출처기관=insts,
+        연도범위=[yrs[0], yrs[-1]] if yrs else None,
+        최대공고집중도=concentration,
+        등급=grade,
+        한줄=(f"표본 {n}건"
+              + (f"·{yrs[0]}~{yrs[-1]}" if yrs else "")
+              + (f"·최대공고 {int(concentration*100)}% 비중" if concentration else "")),
+    )
+
+
 def _weighted_ratio(records):
     """가중 경쟁률 = 총지원 / 총선발. (단순평균의 소규모 공고 왜곡 제거)
 
@@ -336,10 +380,12 @@ def build_dataset():
         for t in ("장애", "보훈", "취업지원"):
             recs_t = [x for x in soc if x.get("사회배려세부") == t]
             if recs_t:
-                soc_by_type[t] = dict(경쟁률=_weighted_ratio(recs_t), n=len(recs_t))
+                soc_by_type[t] = dict(경쟁률=_weighted_ratio(recs_t), n=len(recs_t),
+                                      참고용=(len(recs_t) < 3))  # 공고 1~2건은 '참고용'
         job_stats[j] = dict(
             일반_가중경쟁률=_weighted_ratio(gen),
             일반_n=len(gen),
+            신뢰=_confidence(gen),                # 이 경쟁률을 얼마나 믿을지(라벨용)
             사회배려_가중경쟁률=_weighted_ratio(soc) if soc else None,
             사회배려_n=len(soc),
             사회배려_세부=soc_by_type,        # {'장애':{경쟁률,n}, '취업지원':{...}}

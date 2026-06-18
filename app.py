@@ -233,6 +233,11 @@ with tab1:
             tags += '<span class="pill">사회배려 전형 반영</span>'
         certs_txt = ", ".join(r["로드맵"]["취득권장자격"])
         lang_txt = short_lang(r["로드맵"]["어학"])
+        conf = d.get("신뢰", {})
+        conf_emoji = {"양호": "🟢", "보통": "🟡", "낮음": "🔴"}.get(conf.get("등급"), "")
+        conf_line = (f'<div class="muted" style="margin-top:.4rem">'
+                     f'데이터 신뢰도 {conf_emoji}{conf.get("등급","-")} '
+                     f'· {conf.get("한줄","")}</div>') if conf else ""
 
         st.markdown(f"""
         <div class="card">
@@ -241,6 +246,7 @@ with tab1:
           <div class="nm">{r['직무']}</div>
           <span class="signal sig-{lbl}">
             <span class="dot" style="background:{col}"></span>경쟁 {lbl} · {desc}</span>
+          {conf_line}
           {why_high}
           <div>{tags}</div>
           <div class="facts">
@@ -268,11 +274,39 @@ with tab1:
                 f"**합격선**: {cut}")
             if r["로드맵"]["블라인드안내"]:
                 st.info(r["로드맵"]["블라인드안내"])
+            if r["로드맵"].get("신뢰경고"):
+                st.warning(r["로드맵"]["신뢰경고"])
             if r["로드맵"]["사회배려안내"]:
                 st.warning(r["로드맵"]["사회배려안내"])
 
     if not recs:
         st.stop()
+
+    st.write("")
+    # ── 전략적 우회 경로 (독창성 핵심) ──
+    detours = rc.find_detours(student, recs, ds)
+    if detours["전형우회"] or detours["직렬우회"]:
+        st.markdown('#### 🧭 전략적 우회 경로')
+        st.caption("같은 자격으로 **데이터상 경쟁이 덜한 길**을 찾아줘요. "
+                   "합격 확률이 아니라 **실제 경쟁률의 비율**입니다.")
+        # 전형 우회 — 본인 해당 전형이 있을 때만(점수에 안 들어간 큰 격차)
+        for d in detours["전형우회"]:
+            note = (f"**{d['직무']}**: 일반 {d['일반경쟁률']}:1 → "
+                    f"내가 해당하는 **{d['전형']} 전형 {d['전형경쟁률']}:1** "
+                    f"— 경쟁률이 약 **{d['경쟁배수']}배 낮음**")
+            if d["참고용"]:
+                st.warning(note + f"  \n⚠️ 단, 이 전형은 표본 {d['표본n']}건(공고 1~2개)이라 "
+                                  "**참고용**입니다. 반드시 공고로 응시자격·경쟁을 확인하세요.")
+            else:
+                st.success(note + f"  \n(표본 {d['표본n']}건) 전형별 응시자격·증빙은 공고에서 확인하세요.")
+        # 직렬 우회 — 1순위가 과열일 때만 뜸
+        for d in detours["직렬우회"]:
+            certs = ", ".join(d["준비자격"])
+            st.info(f"**{d['현재직무']}**({d['현재경쟁률']}:1)이 붐비면, 같은 전공으로 갈 수 있는 "
+                    f"**{d['대안직무']}**({d['대안경쟁률']}:1)은 경쟁이 약 **{d['경쟁배수']}배 낮아요**. "
+                    f"(데이터 신뢰도 {d['신뢰등급']})  \n→ 준비할 것: {certs}. "
+                    "응시자격은 공고로 확인하세요.")
+        st.write("")
 
     st.write("")
     # ── 다음 할 일 체크리스트 (접어둠) ──

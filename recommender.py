@@ -137,6 +137,7 @@ def recommend(student: dict, top_k=3, weights=None, ds=None):
                        사회배려세부=내전형_데이터,
                        합격선평균=s["합격선평균"], 합격선표준편차=s["합격선표준편차"],
                        합격선기관=s.get("합격선기관", []),
+                       신뢰=s.get("신뢰", {}),
                        분류=s["분류"]),
             로드맵=_roadmap(job, s, elig.get(job, {}), student,
                           years_left, social_info, 내전형_데이터),
@@ -174,6 +175,17 @@ def _roadmap(job, s, elig, student, years_left, social_applied, 내전형_데이
         blind_note = "이 직무는 전공·학력 제한이 없는 블라인드 채용이라, 전공보다 " \
                      "NCS 필기·경쟁률 관리가 핵심입니다."
 
+    # 신뢰도 경고: 경쟁률 표본이 얕거나 단일공고에 쏠렸으면 정직하게 알린다.
+    conf = s.get("신뢰", {})
+    conf_note = None
+    if conf:
+        if conf.get("등급") == "낮음":
+            conf_note = (f"⚠️ 이 경쟁률은 {conf.get('한줄','표본 적음')}이라 참고용입니다 — "
+                         "당해 공고로 반드시 재확인하세요.")
+        elif conf.get("최대공고집중도") and conf["최대공고집중도"] >= 0.5:
+            conf_note = (f"이 경쟁률은 단일 공고가 {int(conf['최대공고집중도']*100)}%를 "
+                         "차지해, '5년 평균'보다 특정 연도 대형공고에 가깝습니다.")
+
     social_note = None
     if 내전형_데이터:
         # 본인 해당 전형만 구체적으로 안내(장애인에게 보훈 경쟁률을 섞지 않음)
@@ -192,8 +204,83 @@ def _roadmap(job, s, elig, student, years_left, social_applied, 내전형_데이
         어학=lang,
         준비기간=f"약 {years_left:.1f}년",
         블라인드안내=blind_note,
+        신뢰경고=conf_note,
         사회배려안내=social_note,
     )
+
+
+def find_detours(student, recs, ds=None, min_gap=2.0):
+    """[독창성 엔진] '전략적 우회 경로'를 정직하게 계산한다.
+
+    핵심 원칙 — 합격확률·예측은 만들지 않는다. 두 트랙의 '실제 경쟁률 비율'(나눗셈)과
+    '준비 자격의 차이'만 제시한다. "합격확률 N% 상승"(거짓) ✗ → "경쟁률이 약 N배 낮은
+    트랙"(사실) ○.
+
+    두 종류의 우회를 찾는다:
+      (1) 직렬 우회 : 같은 전공 적합권 안에서, 1순위보다 경쟁이 의미있게(min_gap배+)
+                     낮고 신뢰등급이 양호/보통인 트랙. (1순위가 이미 저경쟁이면 안 뜸)
+      (2) 전형 우회 : 사용자가 실제 해당하는 가산 전형(장애/취업지원)이 있으면,
+                     점수에 반영하지 않은 '일반 vs 해당전형' 경쟁 격차를 정보로 노출.
+    """
+    if not recs:
+        return dict(직렬우회=[], 전형우회=[])
+    ds = ds or bd.build_dataset()
+    job_stats = ds["job_stats"]
+    primary = recs[0]
+    p_comp = primary["데이터"]["일반경쟁률"]
+    fit_map = MAJOR_FIT.get(student.get("전공계열", ""), {})
+    have = set(student.get("보유자격", []))
+
+    # (1) 직렬 우회
+    track_detours = []
+    if p_comp:
+        for job, fit in fit_map.items():
+            if job == primary["직무"]:
+                continue
+            s = job_stats.get(job)
+            if not s or not s["일반_가중경쟁률"]:
+                continue
+            conf = s.get("신뢰", {})
+            if conf.get("등급") == "낮음":      # 신뢰 낮은 셀로는 우회 권하지 않는다(정직성)
+                continue
+            alt = s["일반_가중경쟁률"]
+            if alt <= 0 or p_comp / alt < min_gap:
+                continue                        # 의미있는 격차(기본 2배)만
+            need = [c for c in TRACK_PREP.get(job, []) if not any(h in c for h in have)]
+            track_detours.append(dict(
+                대안직무=job, 대안경쟁률=alt, 현재직무=primary["직무"], 현재경쟁률=p_comp,
+                경쟁배수=round(p_comp / alt, 1),
+                신뢰등급=conf.get("등급"), 신뢰한줄=conf.get("한줄"),
+                준비자격=need or ["추가 자격 없이 지원 가능"],
+                블라인드=job in BLIND_JOBS,
+            ))
+        track_detours.sort(key=lambda d: -d["경쟁배수"])
+
+    # (2) 전형 우회 — 사용자가 실제 해당하는 전형만
+    가산 = student.get("가산", {})
+    my_tracks = []
+    if 가산.get("장애인"):
+        my_tracks.append("장애")
+    if 가산.get("취업지원대상자"):
+        my_tracks.append("취업지원")
+    track_switch = []
+    if my_tracks:
+        # 1순위 + 상위 추천 직무에 대해 일반↔해당전형 격차
+        for r in recs:
+            s = job_stats.get(r["직무"], {})
+            gen = s.get("일반_가중경쟁률")
+            for t in my_tracks:
+                d_t = s.get("사회배려_세부", {}).get(t)
+                if gen and d_t and d_t.get("경쟁률"):
+                    track_switch.append(dict(
+                        직무=r["직무"], 전형=t,
+                        일반경쟁률=gen, 전형경쟁률=d_t["경쟁률"],
+                        경쟁배수=round(gen / d_t["경쟁률"], 1),
+                        표본n=d_t["n"], 참고용=d_t.get("참고용", False),
+                    ))
+        track_switch.sort(key=lambda d: -d["경쟁배수"])
+
+    return dict(직렬우회=track_detours[:2], 전형우회=track_switch[:3])
 
 
 if __name__ == "__main__":
