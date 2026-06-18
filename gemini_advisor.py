@@ -62,7 +62,70 @@ _SYSTEM = """당신은 부산 공공기관 취업을 준비하는 대학생의 �
 3. 사무·행정 등 블라인드 직무는 전공 제한이 없음을 정확히 안내하고, 전공과
    무관한 기술직으로 무리하게 갈아타라고 권하지 않습니다.
 4. 임용조건 컨텍스트에 토익 최저·요구자격이 있으면 그 수치를 인용합니다.
-5. 담백하게, 핵심만. 마크다운 헤더 남발 금지."""
+5. 코드가 조회해 제공한 직무 데이터의 수치만 씁니다. 표에 없는 직무·수치를 새로
+   만들어 답하지 마세요. 없으면 "데이터에 없어 공고로 확인이 필요하다"고 답합니다.
+6. 담백하게, 핵심만. 마크다운 헤더 남발 금지."""
+
+
+
+# ───────── 질문→직무 파싱 + 전체 데이터 결정론적 조회 (AI 상담 재설계) ─────────
+# 핵심 원칙: 수치는 코드가 ds["job_stats"]에서 '직접 조회'하고, LLM은 문장화만 한다.
+# 과거 구조는 추천(recs)에만 의존해, 추천에 없는 직무(예: 추천이 사무직인데
+# "전기직 경쟁률은?")를 물으면 답할 데이터가 없었다. 이제 전체 직무를 조회한다.
+
+# 사용자가 말로 쓰는 표현 → 표준 직무 카테고리. busan_data.JOB_GROUPS와 같은 어휘.
+_JOB_ALIASES = {
+    "사무·행정": ["사무", "행정", "운영", "경영", "회계", "법무", "비서", "총무", "일반직"],
+    "전기": ["전기"],
+    "기계": ["기계", "설비", "공조", "냉동"],
+    "전산": ["전산", "it", "아이티", "정보처리", "개발", "프로그램"],
+    "신호·통신": ["신호", "통신"],
+    "토목·건축": ["토목", "건축", "조경", "도시계획", "감리"],
+    "운전·운송": ["운전", "운송", "차량", "기관사"],
+    "공무직·기능": ["공무직", "미화", "기능", "경비", "유지보수"],
+    "청년인턴": ["인턴", "청년인턴", "체험형"],
+}
+
+
+def _detect_jobs(question: str, ds: dict) -> list:
+    """질문에서 언급된 직무 카테고리를 찾는다(ds에 실제 통계가 있는 것만)."""
+    if not ds:
+        return []
+    q = (question or "").lower().replace(" ", "")
+    stats = ds.get("job_stats", {})
+    found = []
+    for job, aliases in _JOB_ALIASES.items():
+        if job not in stats:
+            continue
+        if any(a.replace(" ", "") in q for a in aliases):
+            found.append(job)
+    return found
+
+
+def _job_facts(job: str, ds: dict) -> dict:
+    """한 직무의 모든 통계를 결정론적으로 묶는다(LLM이 지어낼 필요 없게)."""
+    s = ds.get("job_stats", {}).get(job, {}) if ds else {}
+    elig = ds.get("eligibility", {}).get(job, {}) if ds else {}
+    return {
+        "직무": job,
+        "일반전형_경쟁률": s.get("일반_가중경쟁률"),
+        "일반전형_표본수": s.get("일반_n"),
+        "사회배려전형_경쟁률": s.get("사회배려_가중경쟁률"),
+        "합격선평균": s.get("합격선평균"),
+        "합격선출처기관": s.get("합격선기관", []),
+        "경쟁분류": s.get("분류"),
+        "공고근거_토익최저": elig.get("토익최저"),
+        "공고근거_블라인드명시": elig.get("블라인드명시"),
+    }
+
+
+def _lookup(question: str, recs: list, ds: dict) -> dict:
+    """질문에 맞는 데이터를 결정론적으로 조회.
+       직무가 명시되면 그 직무를, 없으면 추천 직무로 폴백."""
+    jobs = _detect_jobs(question, ds)
+    if jobs:
+        return {"직무명시": True, "데이터": [_job_facts(j, ds) for j in jobs]}
+    return {"직무명시": False, "데이터": [_job_facts(r["직무"], ds) for r in recs]}
 
 
 def _ctx(student, recs, ds=None):
@@ -91,11 +154,21 @@ def narrate_roadmap(student: dict, recs: list, ds: dict = None) -> str:
 
 
 def chat(student: dict, recs: list, question: str, ds: dict = None, history=None) -> str:
-    ctx = _ctx(student, recs, ds)
-    prompt = (f"데이터 컨텍스트:\n{json.dumps(ctx, ensure_ascii=False)}\n\n"
-              f"학생 질문: {question}\n\n컨텍스트(경쟁률·합격선·공고 임용조건)에 근거해 "
-              "3~5문장으로 답하세요. 컨텍스트에 없으면 솔직히 없다고 하고 공고 확인을 권하세요.")
-    return _call(prompt, _SYSTEM, max_tokens=700) or _fallback_chat(student, recs, question)
+    # [재설계] 수치는 코드가 조회(_lookup), LLM은 그 수치를 문장으로만 정리.
+    look = _lookup(question, recs, ds)
+    학생요약 = {k: student.get(k) for k in ("학년", "전공계열", "보유자격", "어학", "사회배려")}
+    prompt = (
+        f"학생 정보: {json.dumps(학생요약, ensure_ascii=False)}\n"
+        f"질문에서 코드가 직접 조회한 직무 데이터(이 수치만 사용, 새 수치 금지):\n"
+        f"{json.dumps(look['데이터'], ensure_ascii=False, indent=1)}\n\n"
+        f"학생 질문: {question}\n\n"
+        + ("위 '질문 직무 데이터'의 수치(경쟁률·합격선·표본수·토익최저)만 인용해 "
+           if look["직무명시"] else
+           "질문에 특정 직무가 없어 추천 직무 데이터를 제공했습니다. 이 수치만 인용해 ")
+        + "3~5문장으로 답하세요. 표에 없는 직무·가산점표·당해 일정 등은 "
+          "'데이터에 없어 공고로 확인 필요'라고 정직하게 답하세요. 합격선은 과거 통계이며 "
+          "예측이 아님을 한 번 짚으세요.")
+    return _call(prompt, _SYSTEM, max_tokens=700) or _fallback_chat(student, recs, question, ds)
 
 
 def _fallback_roadmap(student: dict, recs: list) -> str:
@@ -119,13 +192,26 @@ def _fallback_roadmap(student: dict, recs: list) -> str:
     return " ".join(lines)
 
 
-def _fallback_chat(student: dict, recs: list, question: str) -> str:
-    if not recs:
+def _fallback_chat(student: dict, recs: list, question: str, ds: dict = None) -> str:
+    # [재설계] 폴백도 결정론적 조회를 사용 → API 키 없어도 질문 직무를 정확히 답한다.
+    look = _lookup(question, recs, ds)
+    facts = look["데이터"]
+    if not facts:
         return "먼저 프로필을 제출하면 데이터 근거로 답해 드립니다."
-    top = recs[0]
-    d = top["데이터"]
-    return (f"제공 데이터 기준으로 답하면, '{top['직무']}'의 일반전형 누적 경쟁률은 "
-            f"{d['일반경쟁률']}:1"
-            + (f", 평균 합격선 {d['합격선평균']}점입니다. " if d['합격선평균'] else "입니다. ")
-            + "질문에 필요한 세부 수치(가산점표·당해 일정 등)가 데이터에 없으면 "
-              "각 기관 채용공고로 확인해야 정확합니다.")
+    parts = []
+    for f in facts:
+        if f["일반전형_경쟁률"] is None:
+            parts.append(f"'{f['직무']}'은(는) 경쟁률 데이터가 충분치 않습니다.")
+            continue
+        seg = (f"'{f['직무']}'의 일반전형 누적 경쟁률은 {f['일반전형_경쟁률']}:1"
+               f"(표본 {f['일반전형_표본수']}건)")
+        if f["합격선평균"]:
+            seg += f", 평균 합격선 {f['합격선평균']}점"
+            if len(f["합격선출처기관"]) > 1:
+                seg += "(기관 혼합 — 직접 비교 주의)"
+        if f["사회배려전형_경쟁률"]:
+            seg += f". 사회배려 전형은 {f['사회배려전형_경쟁률']}:1로 더 낮습니다"
+        parts.append(seg + ".")
+    tail = (" 위 수치는 과거 공시 통계이며 예측이 아닙니다. 가산점표·당해 일정 등 "
+            "데이터에 없는 항목은 각 기관 공고로 확인하세요.")
+    return " ".join(parts) + tail

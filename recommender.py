@@ -91,7 +91,17 @@ def recommend(student: dict, top_k=3, weights=None, ds=None):
     fit_map = MAJOR_FIT.get(student.get("전공계열", ""), {})
     grade = student.get("학년", 2)
     years_left = max(0.5, 4 - grade + 0.5)
-    social = bool(student.get("사회배려"))
+    # [세분화] 장애/보훈/취업지원은 법적으로 다른 집단이라 하나의 Boolean으로
+    # 뭉치지 않는다. 사용자가 실제 해당하는 전형만 추려서, 그 전형의 경쟁률만
+    # '정보'로 보여준다(점수에는 반영하지 않는다 — 아래 주석 참고).
+    내전형 = []
+    가산 = student.get("가산", {})
+    if 가산.get("장애인"):
+        내전형.append("장애")
+    if 가산.get("취업지원대상자"):
+        내전형.append("취업지원")
+    # 보훈은 입력 위젯이 따로 없어 취업지원대상자에 포함되는 경우가 많음(국가보훈부
+    # 증명). 데이터에 보훈 전형이 있으면 취업지원대상자에게 함께 안내한다.
 
     results = []
     for job, fit in fit_map.items():
@@ -101,36 +111,42 @@ def recommend(student: dict, top_k=3, weights=None, ds=None):
 
         gen_comp = s["일반_가중경쟁률"]
         comp_s = _competition_score(gen_comp)
-
-        # 사회배려: 가짜 직무로 갈아타게 하지 않고, '이 직무의 사회배려 전형'
-        # 경쟁률 갭만 정보로 제공한다(해당자에 한해 점수에 소폭 반영).
-        soc_comp = s["사회배려_가중경쟁률"]
-        social_applied = bool(social and soc_comp)
-        if social_applied:
-            comp_s = max(comp_s, _competition_score(soc_comp))
+        # [중요 수정] 과거엔 사회배려 경쟁률을 점수(comp_s)에 max()로 섞었다. 그러면
+        # 장애인 등록자에게 '장애+보훈+취업지원 혼합 경쟁률'로 점수를 줘서, 본인이
+        # 실제 지원 가능한 전형이 아닌 값으로 추천이 흔들렸다. 이제 점수는 항상
+        # '일반전형' 기준으로만 매기고, 사회배려는 정보로만 분리해 보여준다.
 
         size = _sample_score(s["일반_n"])           # '규모' 아님 → 데이터 표본량(신뢰도)
-
         score = (w["fit"] * fit + w["comp"] * comp_s + w["size"] * size)
+
+        # 사용자 본인 해당 전형의 세부 경쟁률만 추림(없으면 빈 dict)
+        내전형_데이터 = {}
+        for t in 내전형:
+            d_t = s.get("사회배려_세부", {}).get(t)
+            if d_t and d_t.get("경쟁률"):
+                내전형_데이터[t] = d_t
+        social_info = bool(내전형_데이터)
 
         results.append(dict(
             직무=job, 적합도=round(score * 100),
             블라인드=job in BLIND_JOBS,
             구성=dict(전공적합=round(fit, 2), 경쟁여유=round(comp_s, 2),
                       표본량=round(size, 2)),
-            사회배려적용=social_applied,
-            데이터=dict(일반경쟁률=gen_comp, 사회배려경쟁률=soc_comp,
+            사회배려적용=social_info,
+            데이터=dict(일반경쟁률=gen_comp, 사회배려경쟁률=s["사회배려_가중경쟁률"],
+                       사회배려세부=내전형_데이터,
                        합격선평균=s["합격선평균"], 합격선표준편차=s["합격선표준편차"],
                        합격선기관=s.get("합격선기관", []),
                        분류=s["분류"]),
             로드맵=_roadmap(job, s, elig.get(job, {}), student,
-                          years_left, social_applied),
+                          years_left, social_info, 내전형_데이터),
         ))
     results.sort(key=lambda r: -r["적합도"])
     return results[:top_k]
 
 
-def _roadmap(job, s, elig, student, years_left, social_applied):
+def _roadmap(job, s, elig, student, years_left, social_applied, 내전형_데이터=None):
+    내전형_데이터 = 내전형_데이터 or {}
     cut = s["합격선평균"]
     std = s["합격선표준편차"]
     if cut:
@@ -159,10 +175,16 @@ def _roadmap(job, s, elig, student, years_left, social_applied):
                      "NCS 필기·경쟁률 관리가 핵심입니다."
 
     social_note = None
-    if social_applied and s["사회배려_가중경쟁률"]:
-        social_note = (f"사회배려(장애·보훈·취업지원) 전형 지원 시 이 직무의 경쟁률은 "
-                       f"일반 {s['일반_가중경쟁률']}:1 → 사회배려 {s['사회배려_가중경쟁률']}:1로 "
-                       f"낮아집니다. 증빙·자격을 미리 준비하세요.")
+    if 내전형_데이터:
+        # 본인 해당 전형만 구체적으로 안내(장애인에게 보훈 경쟁률을 섞지 않음)
+        gen_r = s["일반_가중경쟁률"]
+        bits = []
+        labels = {"장애": "장애인", "취업지원": "취업지원대상자", "보훈": "보훈"}
+        for t, d_t in 내전형_데이터.items():
+            bits.append(f"{labels.get(t, t)} 전형 {d_t['경쟁률']}:1(표본 {d_t['n']}건)")
+        social_note = (f"내가 해당하는 전형 기준: 일반 {gen_r}:1 → "
+                       + " / ".join(bits)
+                       + ". 단, 전형별 응시자격·증빙은 공고에서 꼭 확인하세요.")
 
     return dict(
         필기목표=target,

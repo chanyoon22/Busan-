@@ -119,6 +119,20 @@ def normalize_track(*texts):
     return "일반"
 
 
+def normalize_social_type(*texts):
+    """사회배려 안에서도 세부 전형을 구분한다. 장애/보훈/취업지원은 법적으로
+       다른 집단이라 하나로 뭉치면 안 된다(장애인 등록자에게 보훈 경쟁률을
+       적용하는 식의 오해 방지). 일반전형이면 None."""
+    blob = " ".join(str(t) for t in texts if t)
+    if "장애" in blob:
+        return "장애"
+    if "보훈" in blob:
+        return "보훈"
+    if "취업지원" in blob:
+        return "취업지원"
+    return None
+
+
 # 공고명에서 직무 단서를 뽑는다(교통공사: 괄호 안 '(운영)', '(전기)' 등).
 def _job_hint_from_notice(name):
     name = str(name or "")
@@ -145,6 +159,7 @@ def load_rate_records():
             직무=normalize_job(hint, r[1]),             # 전형(r[2])은 제외
             전형=normalize_track(r[2]),
             전형원문=r[2],
+            사회배려세부=normalize_social_type(r[2]),
             선발=sel, 지원=app, 합격선=_float(r[5]),
             경쟁률=(app / sel if sel and app else _ratio(r[6])),
         ))
@@ -161,6 +176,7 @@ def load_rate_records():
             직무=normalize_job(field),                  # 직렬 컬럼만으로 직무 판정
             전형=normalize_track(gubun, field),
             전형원문=gubun,
+            사회배려세부=normalize_social_type(gubun, field),
             선발=sel, 지원=app, 합격선=_float(r[6]),     # 도시공사 합격선: 2021년~ 46건 존재(2020년은 결측)
             경쟁률=(app / sel if sel and app else _ratio(r[7])),
         ))
@@ -315,11 +331,18 @@ def build_dataset():
         gen_cuts = [x["합격선"] for x in gen if x["합격선"] and x["합격선"] > 0]
         # 합격선이 어느 기관에서 왔는지 — 서로 다른 시험을 섞었는지 드러내기 위함
         cut_insts = sorted({x["기관"] for x in gen if x["합격선"] and x["합격선"] > 0})
+        # 사회배려 세부 전형별 경쟁률(장애/보훈/취업지원은 다른 집단이라 분리)
+        soc_by_type = {}
+        for t in ("장애", "보훈", "취업지원"):
+            recs_t = [x for x in soc if x.get("사회배려세부") == t]
+            if recs_t:
+                soc_by_type[t] = dict(경쟁률=_weighted_ratio(recs_t), n=len(recs_t))
         job_stats[j] = dict(
             일반_가중경쟁률=_weighted_ratio(gen),
             일반_n=len(gen),
             사회배려_가중경쟁률=_weighted_ratio(soc) if soc else None,
             사회배려_n=len(soc),
+            사회배려_세부=soc_by_type,        # {'장애':{경쟁률,n}, '취업지원':{...}}
             합격선평균=round(statistics.mean(gen_cuts), 1) if gen_cuts else None,
             합격선표준편차=round(statistics.pstdev(gen_cuts), 1) if len(gen_cuts) > 1 else None,
             합격선n=len(gen_cuts),
