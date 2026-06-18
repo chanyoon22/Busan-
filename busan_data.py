@@ -108,6 +108,36 @@ def normalize_job(*texts):
     return "기타"
 
 
+def load_job_overrides():
+    """직무분류_검증표.csv의 '수동검수_정정' 칸이 채워진 행을 override 맵으로 반환한다.
+       자동분류(키워드 기반)는 오분류 위험이 있으므로, 143행 전수검수에서 사람이
+       바로잡은 값을 ETL이 자동분류보다 '우선' 적용한다(정직성·투명성). 칸이 비어
+       있으면 빈 맵 → 자동분류 그대로(현재 상태)."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    for p in (os.path.join(base, "직무분류_검증표.csv"),
+              os.path.join(DATA_DIR, "직무분류_검증표.csv")):
+        if not os.path.exists(p):
+            continue
+        ov = {}
+        with open(p, encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                fix = (row.get("수동검수_정정") or "").strip()
+                if fix:
+                    ov[((row.get("기관") or "").strip(),
+                        (row.get("원본_공고명") or "").strip())] = fix
+        return ov
+    return {}
+
+
+# 모듈 1회 로드(ETL이 레코드마다 자동분류 후 이 값으로 덮어쓴다)
+JOB_OVERRIDES = load_job_overrides()
+
+
+def _job_with_override(기관, 공고명, auto):
+    """자동분류 결과를 검증표 정정값으로 덮어쓴다(있을 때만)."""
+    return JOB_OVERRIDES.get((str(기관), str(공고명 or "").strip()), auto)
+
+
 # ───────────────── 2축: 전형(track) 정규화 ─────────────────
 SOCIAL_KEYS = ["장애", "보훈", "취업지원"]
 
@@ -156,7 +186,7 @@ def load_rate_records():
         hint = _job_hint_from_notice(r[1])              # '(운영)' → 운영
         recs.append(dict(
             기관="부산교통공사", 연도=_int(r[0]), 공고명=r[1],
-            직무=normalize_job(hint, r[1]),             # 전형(r[2])은 제외
+            직무=_job_with_override("부산교통공사", r[1], normalize_job(hint, r[1])),
             전형=normalize_track(r[2]),
             전형원문=r[2],
             사회배려세부=normalize_social_type(r[2]),
@@ -173,7 +203,7 @@ def load_rate_records():
         gubun, field = str(r[2] or ""), str(r[3] or "")
         recs.append(dict(
             기관="부산도시공사", 연도=_int(r[0]), 공고명=str(r[1] or ""),
-            직무=normalize_job(field),                  # 직렬 컬럼만으로 직무 판정
+            직무=_job_with_override("부산도시공사", str(r[1] or ""), normalize_job(field)),
             전형=normalize_track(gubun, field),
             전형원문=gubun,
             사회배려세부=normalize_social_type(gubun, field),
@@ -451,7 +481,8 @@ def build_dataset():
     )
 
     return dict(
-        meta=dict(경쟁률레코드=len(rate), 합격선레코드=len(cut_recs)),
+        meta=dict(경쟁률레코드=len(rate), 합격선레코드=len(cut_recs),
+                  검증표=dict(전수검수행=143, 정정적용=len(JOB_OVERRIDES))),
         job_stats=job_stats,
         mismatch=mismatch,
         esg=dict(선발=soc_sel, 지원=soc_app,
