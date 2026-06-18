@@ -119,13 +119,38 @@ def _job_facts(job: str, ds: dict) -> dict:
     }
 
 
+# 경쟁률·합격선 데이터가 '없는' 기관(교통·도시만 보유). 이 기관의 경쟁률/합격선을
+# 물으면 추천 직무 숫자로 답하지 말고 '데이터 없음'으로 방어해야 한다(비환각).
+_NO_RATE_INSTITUTIONS = ["시설공단", "환경공단", "관광공사"]
+_SCHEDULE_KEYS = ["일정", "언제", "날짜", "며칠", "모집기간", "접수기간", "원서접수"]
+_METRIC_KEYS = ["경쟁률", "합격선", "커트라인", "합격점", "필기점수"]
+
+
+def _is_absent_query(question: str, jobs: list) -> str | None:
+    """질문이 '우리에게 없는 데이터'를 묻는지 판정. 결측이면 사유 문자열, 아니면 None.
+       (직무가 명확히 잡힌 보유 데이터 질의는 결측으로 보지 않는다.)"""
+    q = (question or "")
+    # 일정/날짜는 데이터에 없음
+    if any(k in q for k in _SCHEDULE_KEYS):
+        return "당해 채용 일정·날짜는 데이터에 없습니다(공고 확인 필요)."
+    # 경쟁률/합격선 데이터가 없는 기관을 명시적으로 물은 경우(직무가 잡혀도 방어:
+    # 우리 경쟁률·합격선은 교통·도시 2기관 값이라 타 기관 질의에 답이 안 됨)
+    if any(m in q for m in _METRIC_KEYS) and any(i in q for i in _NO_RATE_INSTITUTIONS):
+        return ("해당 기관의 경쟁률·합격선은 데이터에 없습니다(보유: 교통공사·도시공사 2기관). "
+                "공고로 확인이 필요합니다.")
+    return None
+
+
 def _lookup(question: str, recs: list, ds: dict) -> dict:
     """질문에 맞는 데이터를 결정론적으로 조회.
-       직무가 명시되면 그 직무를, 없으면 추천 직무로 폴백."""
+       직무가 명시되면 그 직무를, 결측 질의면 '없음'으로 방어, 그 외엔 추천 직무로 폴백."""
     jobs = _detect_jobs(question, ds)
+    absent = _is_absent_query(question, jobs)
+    if absent:
+        return {"직무명시": False, "결측": absent, "데이터": []}
     if jobs:
-        return {"직무명시": True, "데이터": [_job_facts(j, ds) for j in jobs]}
-    return {"직무명시": False, "데이터": [_job_facts(r["직무"], ds) for r in recs]}
+        return {"직무명시": True, "결측": None, "데이터": [_job_facts(j, ds) for j in jobs]}
+    return {"직무명시": False, "결측": None, "데이터": [_job_facts(r["직무"], ds) for r in recs]}
 
 
 def _ctx(student, recs, ds=None):
@@ -156,6 +181,8 @@ def narrate_roadmap(student: dict, recs: list, ds: dict = None) -> str:
 def chat(student: dict, recs: list, question: str, ds: dict = None, history=None) -> str:
     # [재설계] 수치는 코드가 조회(_lookup), LLM은 그 수치를 문장으로만 정리.
     look = _lookup(question, recs, ds)
+    if look.get("결측"):                       # 보유하지 않은 데이터는 LLM에 넘기지 않는다
+        return look["결측"]
     학생요약 = {k: student.get(k) for k in ("학년", "전공계열", "보유자격", "어학", "사회배려")}
     prompt = (
         f"학생 정보: {json.dumps(학생요약, ensure_ascii=False)}\n"
@@ -195,6 +222,8 @@ def _fallback_roadmap(student: dict, recs: list) -> str:
 def _fallback_chat(student: dict, recs: list, question: str, ds: dict = None) -> str:
     # [재설계] 폴백도 결정론적 조회를 사용 → API 키 없어도 질문 직무를 정확히 답한다.
     look = _lookup(question, recs, ds)
+    if look.get("결측"):                       # 우리에게 없는 데이터 → 가짜 수치 대신 방어
+        return look["결측"]
     facts = look["데이터"]
     if not facts:
         return "먼저 프로필을 제출하면 데이터 근거로 답해 드립니다."
