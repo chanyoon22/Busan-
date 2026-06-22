@@ -188,8 +188,23 @@ if submitted or "student" not in st.session_state:
         사회배려=bool(social_v or disabled),
         가산={"취업지원대상자": social_v, "장애인": disabled})
     st.session_state.weights = weights
-    st.session_state.recs = rc.recommend(st.session_state.student, weights=weights, ds=ds)
-    st.session_state.pop("ai_roadmap", None)
+    # ── 진행 표시 (버튼 눌렀을 때만, 첫 로드 때는 조용히 실행) ──
+    if submitted:
+        with st.sidebar:
+            prog = st.progress(0, text="분석 중…")
+        prog.progress(30, text="데이터 조회 중…")
+        st.session_state.recs = rc.recommend(
+            st.session_state.student, weights=weights, ds=ds)
+        prog.progress(80, text="우회 경로 계산 중…")
+        st.session_state.pop("ai_roadmap", None)
+        prog.progress(100, text="완료!")
+        import time; time.sleep(0.4)
+        prog.empty()
+        st.toast("✅ 추천 완료! 아래 결과를 확인하세요.", icon="🎯")
+    else:
+        st.session_state.recs = rc.recommend(
+            st.session_state.student, weights=weights, ds=ds)
+        st.session_state.pop("ai_roadmap", None)
 
 student = st.session_state.student
 recs = st.session_state.recs
