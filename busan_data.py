@@ -405,6 +405,21 @@ def build_dataset():
         gen_cuts = [x["합격선"] for x in gen if x["합격선"] and x["합격선"] > 0]
         # 합격선이 어느 기관에서 왔는지 — 서로 다른 시험을 섞었는지 드러내기 위함
         cut_insts = sorted({x["기관"] for x in gen if x["합격선"] and x["합격선"] > 0})
+        # [통계 착시 제거] 기관마다 필기 시험 과목·배점이 달라(교통=NCS+일반상식,
+        # 도시=NCS+전공 등) 두 기관 합격선을 하나의 '평균'으로 합치면 통계적 착시가
+        # 된다(90·62 → 76 같은 무의미한 숫자). 그래서 합격선을 '기관별로 분리'해서
+        # 각각의 평균·표본을 따로 보관한다. UI는 합산 평균 대신 이 분리값을 쓴다.
+        cut_by_inst = {}
+        for inst_ in cut_insts:
+            vals = [x["합격선"] for x in gen
+                    if x["기관"] == inst_ and x["합격선"] and x["합격선"] > 0]
+            if vals:
+                cut_by_inst[inst_] = dict(
+                    평균=round(statistics.mean(vals), 1),
+                    표준편차=round(statistics.pstdev(vals), 1) if len(vals) > 1 else None,
+                    n=len(vals),
+                    범위=[min(vals), max(vals)],
+                )
         # 사회배려 세부 전형별 경쟁률(장애/보훈/취업지원은 다른 집단이라 분리)
         soc_by_type = {}
         for t in ("장애", "보훈", "취업지원"):
@@ -423,6 +438,7 @@ def build_dataset():
             합격선표준편차=round(statistics.pstdev(gen_cuts), 1) if len(gen_cuts) > 1 else None,
             합격선n=len(gen_cuts),
             합격선기관=cut_insts,         # 1개 기관이면 동질, 2개면 '이종 시험 혼합'
+            합격선_기관별=cut_by_inst,    # [착시 제거] 기관마다 분리한 평균·표본(UI는 이걸 씀)
             분류=_classify(_weighted_ratio(gen)),
         )
 

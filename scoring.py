@@ -494,8 +494,34 @@ def regular_bonus_score(track: str, certs: list | None, social: dict | None,
     )
 
 
-if __name__ == "__main__":
-    P = TOURISM_CONTRACT_2026_42
+def regular_bonus_catalog(track: str, institution: str = "부산교통공사") -> dict:
+    """이 직무·기관에서 '가산을 받을 수 있는 자격/전형'의 목록을 돌려준다.
+       가산비율 0%가 떴을 때, 사용자가 '내가 뭘 안 가진 건지' 알 수 있게 보여주기 위함.
+       (침묵하는 0% 대신, 무엇을 따면 몇 % 붙는지 actionable하게 안내)."""
+    전직렬 = dict(_REG_CERT_ALL.get(institution, {}))
+    해당직렬 = dict(_REG_CERT_TRACK.get(institution, {}).get(track, {}))
+    dis = _DISABLED_PCT.get(institution, 5)
+    # 표시 정렬: 높은 가산 먼저
+    def _sorted(d):
+        return sorted(({"자격": c, "가산": f"+{p}%", "_p": p} for c, p in d.items()),
+                      key=lambda x: -x["_p"])
+    return dict(
+        기관=institution, 직무=track,
+        해당직렬자격=_sorted(해당직렬),     # 이 직무에서 인정되는 자격(가장 직접적)
+        전직렬자격=_sorted(전직렬),         # 직무 무관 전문자격(변호사·회계사 등)
+        전형가산=[
+            {"항목": "취업지원대상자(보훈)", "가산": "+5% 또는 +10%"},
+            {"항목": "장애인 등록", "가산": f"+{dis}% ({institution.replace('부산','')} 기준)"},
+        ],
+        안내=("위 자격 중 1개라도 보유하면 필기 가산이 붙습니다(가장 유리한 1개 적용, "
+             "단 취업지원+자격증은 합산). 지금 0%인 건 사이트 오류가 아니라 위 항목을 "
+             "아직 안 가졌다는 뜻이에요. 출처: "
+             + ("교통공사 제2025-186호" if institution == "부산교통공사" else "시설공단 제2024-98호")
+             + " · 당해 공고로 재확인."),
+    )
+
+
+
     print("=== 관광공사 일반계약직 제2026-42호 분야별 적격 판정 ===\n")
 
     cases = [
