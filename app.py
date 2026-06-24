@@ -125,7 +125,7 @@ with st.container():
       <div class="steps">
         <div class="step"><b>1. 내 정보 입력</b>왼쪽에서 학년·전공·자격증을 넣고 '추천 받기'</div>
         <div class="step"><b>2. 데이터 추천</b>경쟁률·신뢰도 기반 직무 순위와 우회 경로 확인</div>
-        <div class="step"><b>3. 근거 확인</b>'근거·데이터' 탭에서 출처와 비환각 검증까지</div>
+        <div class="step"><b>3. 근거 확인</b>'근거·데이터' 탭에서 합격선·추세 데이터 확인</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -272,7 +272,7 @@ student = st.session_state.student
 recs = st.session_state.recs
 
 tab1, tab2, tab3 = st.tabs(
-    ["🎯 내 로드맵", "📊 근거·데이터", "🧰 더보기"])
+    ["🎯 내 로드맵", "🧰 추가기능", "📊 근거·데이터"])
 
 # ════════════════════════ 탭 1: 내 로드맵 ════════════════════════
 with tab1:
@@ -314,8 +314,7 @@ with tab1:
         conf = d.get("신뢰", {})
         conf_emoji = {"양호": "🟢", "보통": "🟡", "낮음": "🔴"}.get(conf.get("등급"), "")
         conf_line = (f'<div class="muted" style="margin-top:.4rem">'
-                     f'데이터 신뢰도 {conf_emoji}{conf.get("등급","-")} '
-                     f'· {conf.get("한줄","")}</div>') if conf else ""
+                     f'데이터 신뢰도 {conf_emoji}{conf.get("등급","-")}</div>') if conf else ""
 
         st.markdown(f"""
         <div class="card">
@@ -337,88 +336,49 @@ with tab1:
         """, unsafe_allow_html=True)
 
         with st.expander(f"💡 추천 점수 {r['적합도']}점은 무슨 뜻인가요? · {i}순위 이유"):
-            st.markdown(
-                f"**추천 점수**는 합격 가능성이 아니에요. "
-                f"'내 전공으로 지원 가능한지 + 경쟁이 덜한지 + 데이터가 믿을 만한지'를 "
-                f"0~100으로 합친 **'데이터상 유리한 정도'**예요. 높을수록 데이터상 유리해요.")
             comp_r = round(d["일반경쟁률"]) if d["일반경쟁률"] else None
             bullets = []
             if r["블라인드"]:
-                bullets.append("**전공 적합**: 이 직무는 전공을 안 보는 블라인드 채용이라 누구나 지원 가능")
+                bullets.append("**전공 적합**: 전공·학력 안 보는 블라인드 채용 — 누구나 지원 가능")
             else:
-                bullets.append(f"**전공 적합**: 내 전공({major})으로 지원하기 적합한 직무")
+                bullets.append(f"**전공 적합**: 내 전공({major})으로 지원하기 적합")
             if comp_r:
-                bullets.append(f"**경쟁 여유**: 과거 평균 경쟁률 {comp_r}:1 "
-                               f"({'덜 치열한 편' if d['일반경쟁률']<=50 else '치열한 편'})")
+                bullets.append(f"**경쟁 여유**: 과거 평균 경쟁률 {comp_r}:1")
             conf = d.get("신뢰", {})
-            if conf.get("한줄"):
-                bullets.append(f"**데이터 신뢰도**: {conf.get('등급')} — {conf['한줄']}")
+            if conf.get("등급"):
+                bullets.append(f"**데이터 신뢰도**: {conf.get('등급')}")
             st.markdown("\n".join(f"- {b}" for b in bullets))
 
             기관별 = r["로드맵"].get("필기기관별", [])
             if 기관별:
-                st.markdown("**과거 합격자 필기 평균 점수** (100점 만점) — "
-                            "지원할 기관 기준으로 보세요:")
+                st.markdown("**과거 합격자 필기 평균 점수** (기관 기준, 100점 만점)")
                 for t in 기관별:
                     st.markdown(
-                        f"- **{t['기관'].replace('부산','')}**: 합격자 평균 "
-                        f"**{t['합격선평균']}점** → 안전 버퍼 +{t['버퍼']}점 = "
-                        f"**목표 {t['목표']}점** (표본 {t['표본']}건)")
-                if len(기관별) > 1:
-                    st.info("두 기관을 **하나의 평균으로 합치지 않았어요.** 교통공사·도시공사는 "
-                            "필기 과목이 서로 달라(예: 운영직은 NCS+일반상식, 일부는 NCS+전공) "
-                            "합치면 의미 없는 숫자가 돼요. **지원할 기관 줄만 보면 됩니다.**")
-            else:
-                st.caption("이 직무는 합격선이 공개되지 않아, 목표 점수는 공고·기출로 직접 "
-                           "잡아야 해요. (공기업 필기는 보통 과목 40%+총점 60% 규정)")
+                        f"- **{t['기관'].replace('부산','')}**: 평균 "
+                        f"**{t['합격선평균']}점** → 목표 **{t['목표']}점** (표본 {t['표본']}건)")
 
-            # ── 합격자 준비 현실(외부 취업정보 — 데이터와 분리, 출처 표기) ──
             guide = r["로드맵"].get("합격자가이드")
             if guide:
                 st.markdown("---")
-                st.markdown(f"**🧭 합격자들은 실제로 이만큼 준비해요**")
+                st.markdown("**🧭 합격자들은 실제로 이만큼 준비해요**")
                 st.markdown(f"> {guide['한줄']}")
-                st.markdown("**실제 합격권 스펙:**")
                 for sp in guide["합격자스펙"]:
                     st.markdown(f"- {sp}")
-                st.warning(guide["현실"])
-                st.caption(f"※ 위 '합격자 준비' 항목은 채용 데이터가 아니라 외부 취업정보 기반 "
-                           f"참고 가이드예요(경쟁률·합격선 수치와 구분). 출처: {guide['출처']}.")
-
-            if r["로드맵"]["블라인드안내"]:
-                st.info(r["로드맵"]["블라인드안내"])
-            if r["로드맵"].get("신뢰경고"):
-                st.warning(r["로드맵"]["신뢰경고"])
-            if r["로드맵"]["사회배려안내"]:
-                st.warning(r["로드맵"]["사회배려안내"])
+                st.caption(guide["현실"])
 
     if not recs:
         st.stop()
 
     st.write("")
-    # ── 전략적 우회 경로 (독창성 핵심) ──
+    # ── 전략적 우회 경로 ──
     detours = rc.find_detours(student, recs, ds)
-    if detours["전형우회"] or detours["직렬우회"]:
-        st.markdown('#### 🧭 전략적 우회 경로')
-        st.caption("같은 자격으로 **데이터상 경쟁이 덜한 길**을 찾아줘요. "
-                   "합격 확률이 아니라 **실제 경쟁률의 비율**입니다.")
-        # 전형 우회 — 본인 해당 전형이 있을 때만(점수에 안 들어간 큰 격차)
-        for d in detours["전형우회"]:
-            note = (f"**{d['직무']}**: 일반 {d['일반경쟁률']}:1 → "
-                    f"내가 해당하는 **{d['전형']} 전형 {d['전형경쟁률']}:1** "
-                    f"— 경쟁률이 약 **{d['경쟁배수']}배 낮음**")
-            if d["참고용"]:
-                st.warning(note + f"  \n⚠️ 단, 이 전형은 표본 {d['표본n']}건(공고 1~2개)이라 "
-                                  "**참고용**입니다. 반드시 공고로 응시자격·경쟁을 확인하세요.")
-            else:
-                st.success(note + f"  \n(표본 {d['표본n']}건) 전형별 응시자격·증빙은 공고에서 확인하세요.")
-        # 직렬 우회 — 1순위가 과열일 때만 뜸
+    if detours["직렬우회"]:
+        st.markdown('#### 🧭 같은 전공으로 갈 수 있는 대안 직무')
         for d in detours["직렬우회"]:
             certs = ", ".join(d["준비자격"])
-            st.info(f"**{d['현재직무']}**({d['현재경쟁률']}:1)이 붐비면, 같은 전공으로 갈 수 있는 "
-                    f"**{d['대안직무']}**({d['대안경쟁률']}:1)은 경쟁이 약 **{d['경쟁배수']}배 낮아요**. "
-                    f"(데이터 신뢰도 {d['신뢰등급']})  \n→ 준비할 것: {certs}. "
-                    "응시자격은 공고로 확인하세요.")
+            st.info(f"**{d['현재직무']}**({d['현재경쟁률']}:1)이 붐비면 → "
+                    f"**{d['대안직무']}**({d['대안경쟁률']}:1)은 경쟁이 약 **{d['경쟁배수']}배 낮아요.** "
+                    f"준비할 것: {certs}. 응시자격은 공고로 확인하세요.")
         st.write("")
 
     st.write("")
@@ -457,31 +417,21 @@ with tab1:
         if g0:
             st.caption("⚠️ 현실 체크: " + g0["현실"])
 
-    # ── 데이터 근거 AI 상담 (접어둠, 동의식) ──
-    with st.expander("🤖 데이터로만 답하는 AI 상담 — 추천에 없는 직무까지 물어보기 (선택 · 외부 전송)"):
-        st.markdown(
-            "**이게 무슨 기능이에요?** 추천 카드에 안 나온 직무·전형까지, **우리 데이터 안에서** "
-            "AI가 정리해 주는 상담 코너예요. 핵심은 **‘지어내지 않는다’**예요 — 경쟁률·합격선 "
-            "같은 숫자는 코드가 데이터에서 **직접 찾아** AI에게 넘기고, AI는 **문장으로 정리만** "
-            "해요. 데이터에 없는 건 가짜 숫자 대신 ‘공고로 확인하세요’라고 답하고요.")
-        st.caption("이럴 때 써요 → ① 추천에 안 나온 다른 직무 경쟁률이 궁금할 때 "
-                   "② 두 직무를 비교하고 싶을 때 ③ 사회배려 전형이 얼마나 유리한지 볼 때")
-        st.warning("아래 버튼/질문을 누르면 내 프로필·질문이 외부 AI(Gemini)로 전송돼요.")
+    # ── AI 상담 ──
+    with st.expander("🤖 AI에게 직접 물어보기 (선택 · 외부 전송)"):
+        st.caption("채용 데이터 기반으로 답해요. 데이터에 없는 건 '공고로 확인하세요' 안내해요.")
 
-        # 1) 한 번에: 내 로드맵 요약
         if st.button("✍️ 내 1순위 로드맵 요약 받기", width="stretch"):
             with st.spinner("정리 중…"):
                 st.session_state.ai_roadmap = ai.narrate_roadmap(student, recs, ds)
         if st.session_state.get("ai_roadmap"):
             st.info(st.session_state.ai_roadmap)
 
-        st.divider()
-        # 2) 예시 질문 — 클릭하면 바로 질문 실행(뭘 물어야 할지 모르는 사람용)
-        st.markdown("**예시 질문 — 눌러보세요** (직접 입력도 가능해요):")
+        st.markdown("**예시 질문:**")
         examples = ["전기직 경쟁률은 얼마야?",
                     "사무·행정이랑 전기직 중 어디가 덜 치열해?",
-                    "사회배려 전형은 일반전형보다 얼마나 유리해?",
-                    "부산시설공단 합격선 알려줘"]
+                    "부산시설공단 합격선 알려줘",
+                    "사무직 합격자들이 준비하는 자격증이 뭐야?"]
         ex_cols = st.columns(2)
         pending = None
         for bi, ex in enumerate(examples):
@@ -493,7 +443,7 @@ with tab1:
         for role, msg in st.session_state.chat:
             with st.chat_message(role):
                 st.write(msg)
-        typed = st.chat_input("직접 질문하기 (전송 시 외부 AI로 전송)")
+        typed = st.chat_input("직접 질문하기 (외부 AI로 전송)")
         q = pending or typed
         if q:
             st.session_state.chat.append(("user", q))
@@ -505,130 +455,8 @@ with tab1:
                 st.write(a)
             st.session_state.chat.append(("assistant", a))
 
-# ════════════════ 탭 2: 근거·데이터 ════════════════
+# ════════════════ 탭 2: 추가기능 ════════════════
 with tab2:
-    st.markdown('<div class="sect">이 추천, 어떤 데이터로 만든 거예요?</div>',
-                unsafe_allow_html=True)
-    st.caption(ds["coverage"]["한줄정정"])
-    st.write("")
-
-    st.write("")
-
-    # ── AI 비환각 검증 (쉬운 말 + ? 도움말 + 실시간 확인) ──
-    st.markdown("**🛡️ 이 AI는 모르는 걸 지어내지 않아요** (비환각 검증)")
-    st.caption("취업 정보에 가짜 숫자는 사고예요. 그래서 수치는 코드가 데이터에서 직접 "
-               "찾고, AI는 문장으로 정리만 해요. 없는 값은 '공고 확인'이라고 답하고요.")
-    h1, h2, h3 = st.columns(3)
-    h1.metric("데이터 있는 질문, 정답률", "100%",
-              help="경쟁률·합격선이 데이터에 있으면 AI가 그 값을 그대로 인용해요. "
-                   "다른 숫자로 바꾸거나 지어내지 않아요. (검증 하네스 13개 질의 실측)")
-    h2.metric("데이터 없는 질문, 방어율", "100%",
-              help="우리한테 없는 값(예: 시설공단 합격선, 당해 채용일정)을 물으면, "
-                   "그럴듯한 가짜 숫자 대신 '공고로 확인하세요'라고 답해요.")
-    h3.metric("지어낸 수치", "0건",
-              help="위 13개 질의 전체에서, 데이터에 없는 경쟁률·합격선·점수를 새로 "
-                   "만들어 답한 경우가 한 건도 없어요.")
-    with st.expander("직접 확인해보기 (실시간)"):
-        st.caption("아래 버튼을 누르면, 일부러 '우리한테 없는 데이터'를 AI에게 물어봐요. "
-                   "AI가 가짜 숫자를 만드는지, 정직하게 방어하는지 바로 보여드려요.")
-        if st.button("‘부산시설공단 합격선’처럼 없는 걸 물어보기", key="halluc_demo"):
-            demo_q = "부산시설공단 일반전형 필기 합격선 평균은?"
-            demo_a = ai.chat(student, recs, demo_q, ds=ds)
-            st.markdown(f"**질문**: {demo_q}")
-            st.success(f"**AI 답변**: {demo_a}")
-            st.caption("→ 가짜 점수를 만들지 않고 '데이터에 없음 → 공고 확인'으로 답하면 통과예요.")
-    st.write("")
-
-    st.markdown("**직무별 경쟁률** — 몇 명 중 1명 뽑았나 (낮을수록 들어가기 쉬움)")
-    st.caption("막대 옆 숫자는 '경쟁률 N:1' = 평균적으로 N명 지원해서 1명 합격했다는 뜻이에요.")
-    mm = [m for m in ds["mismatch"] if m["평균경쟁률"]]
-    mm.sort(key=lambda m: m["평균경쟁률"])
-    cmap = {"과경쟁": BAD, "미달위험": WARN, "적정": GOOD}
-    fig = go.Figure(go.Bar(
-        x=[m["평균경쟁률"] for m in mm], y=[m["직무"] for m in mm], orientation="h",
-        marker_color=[cmap.get(m["분류"], MUTED) for m in mm],
-        text=[f"{m['평균경쟁률']}:1" for m in mm], textposition="outside"))
-    fig.update_layout(title="🔴 치열 · 🟡 보통 · 🟢 여유",
-                      height=360, margin=dict(l=10, r=40, t=40, b=10),
-                      plot_bgcolor="white", font=dict(family="Pretendard"))
-    st.plotly_chart(fig, width="stretch")
-
-    cs = ds["cut_stat"]
-    with st.expander("일반전형 vs 사회배려전형 — 경쟁률 차이 보기"):
-        st.markdown("같은 직무라도 **어느 전형으로 지원하느냐**에 따라 경쟁률이 달라요. "
-                    "아래 막대는 **경쟁률(몇 명 중 1명 뽑았나)**을 비교한 거예요. "
-                    "사회배려 전형(장애·취업지원 등 해당자만 지원)이 보통 경쟁률이 더 낮아요.")
-        gj = [(j, s["일반_가중경쟁률"], s["사회배려_가중경쟁률"])
-              for j, s in ds["job_stats"].items()
-              if s["일반_가중경쟁률"] and s["사회배려_가중경쟁률"]]
-        gj.sort(key=lambda t: -t[1])
-        if gj:
-            gfig = go.Figure()
-            gfig.add_trace(go.Bar(name="일반전형 경쟁률", y=[t[0] for t in gj],
-                                  x=[t[1] for t in gj], orientation="h", marker_color=MUTED))
-            gfig.add_trace(go.Bar(name="사회배려전형 경쟁률", y=[t[0] for t in gj],
-                                  x=[t[2] for t in gj], orientation="h", marker_color=TEAL))
-            gfig.update_layout(barmode="group", height=300,
-                               xaxis_title="경쟁률 (N:1, 낮을수록 유리)",
-                               margin=dict(l=10, r=10, t=10, b=40),
-                               plot_bgcolor="white", font=dict(family="Pretendard"))
-            st.plotly_chart(gfig, width="stretch")
-        st.caption("사회배려(장애·보훈·취업지원)는 ‘직무’가 아니라 지원 ‘전형’이에요. "
-                   "셋은 법적으로 다른 집단이라, 실제 지원 가능 여부는 공고를 확인하세요.")
-
-    with st.expander("어떤 데이터를 어디까지 가지고 있나요? (커버리지)"):
-        cov = ds["coverage"]
-        INSTS = ["부산교통공사", "부산도시공사", "부산관광공사", "부산환경공단", "부산시설공단"]
-        rows_cov = [("경쟁률", cov["경쟁률"]["기관"]),
-                    ("필기 합격선", cov["합격선"]["기관"]),
-                    ("신규채용 규모", cov["신규채용규모"]["기관"]),
-                    ("채용정보", cov["채용정보"]["기관"])]
-        head = "<tr><th style='text-align:left;padding:.3rem .6rem'>데이터</th>" + \
-               "".join(f"<th style='padding:.3rem .5rem'>{i.replace('부산','')}</th>" for i in INSTS) + "</tr>"
-        body = ""
-        for name, have in rows_cov:
-            cells = "".join(
-                (f"<td style='text-align:center;color:{GOOD};font-weight:700'>●</td>" if i in have
-                 else "<td style='text-align:center;color:#cfd8e0'>○</td>") for i in INSTS)
-            body += f"<tr><td style='padding:.3rem .6rem'>{name}</td>{cells}</tr>"
-        st.markdown(f"<table style='border-collapse:collapse;font-size:.86rem'>{head}{body}</table>",
-                    unsafe_allow_html=True)
-        st.caption("● 있음 / ○ 없음. 경쟁률·합격선은 교통·도시 2기관만 있어요.")
-
-    with st.expander("직무 자동분류, 믿어도 되나요? (전수검수)"):
-        v = ds["meta"]["검증표"]
-        st.markdown(f"직무 분류는 키워드 기반이라 오분류 위험이 있어, 전체 "
-                    f"**{v['전수검수행']}건을 검증표로 전수 공개**하고 있어요. "
-                    f"사람이 바로잡은 정정값이 있으면 자동분류보다 **우선 적용**돼요 "
-                    f"(현재 정정 적용 **{v['정정적용']}건**).")
-        st.caption("키워드가 둘 이상 겹치는 모호 케이스(예: '공무직 채용(전기설비 유지보수)')는 "
-                   "검증표에서 따로 검토해요. 분류 근거를 숨기지 않는 게 핵심이에요.")
-
-    with st.expander("필기시험 합격선 (과거 합격자 평균 점수)"):
-        st.markdown("공기업 필기는 100점 만점이지만 **구성이 직무·기관마다 달라요** "
-                    "(예: 부교공 운영직 = NCS+일반상식 / 기술직 = NCS+전공시험). "
-                    "그래서 합격선도 **기관별로 따로** 봐야 해요. 아래는 과거 합격자들의 "
-                    "필기 평균 점수예요(이 점수 근처면 합격권이었다는 뜻).")
-        cc = st.columns(len(cs["기관별"]))
-        for col_, (inst, dd) in zip(cc, cs["기관별"].items()):
-            col_.metric(inst.replace("부산", ""), f"{dd['평균']}점",
-                        help=f"표본 {dd['n']}건 · 점수 편차 ±{dd['표준편차']}점")
-        st.info("두 기관을 **하나의 평균으로 합치지 않았어요.** 시험 과목이 달라서 합치면 "
-                "통계적으로 무의미한 숫자(착시)가 돼요. **지원할 기관 칸만 보면 됩니다.**")
-
-    with st.expander("신규채용 추세"):
-        tfig = go.Figure()
-        for inst, rows in ds["hire_trend"].items():
-            tfig.add_trace(go.Scatter(x=[r["연도"] for r in rows],
-                                      y=[r["정규직일반"] for r in rows],
-                                      mode="lines+markers", name=inst))
-        tfig.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10),
-                           plot_bgcolor="white", font=dict(family="Pretendard"))
-        st.plotly_chart(tfig, width="stretch")
-        st.caption("당해연도 규모는 각 기관 공고로 다시 확인하세요.")
-
-# ════════════════ 탭 3: 더보기 ════════════════
-with tab3:
     st.caption("⚠️ 여기는 '특정 공고 하나'를 기준으로 한 계산기 모음이에요. "
                "탭1의 전체 추천과는 별개고, 공고가 바뀌면 값도 달라져요.")
     sub1, sub2, sub3 = st.tabs(["🎓 청년인턴 점수", "🏢 정규직 가산 계산", "📋 관광공사 계약직 체커"])
@@ -700,8 +528,7 @@ with tab3:
             if reg["가산비율"] > 0:
                 st.markdown("**적용 내역**: " + " + ".join(reg["근거"]))
             else:
-                st.markdown("**가산 0% — 사이트 오류가 아니에요.** 아래 자격/전형 중 "
-                            "**아직 가진 게 없다**는 뜻이에요. 따면 바로 가산이 붙어요.")
+                st.caption("아직 해당하는 가산 자격이 없어요. 아래에서 어떤 자격이 가산되는지 확인해보세요.")
         # [개선] 0%일 때 침묵하지 않고 '뭘 따면 몇 % 붙는지' 카탈로그를 펼쳐 보여준다.
         cat = sc.regular_bonus_catalog(reg_track, inst)
         with st.expander(f"💡 {inst.replace('부산','')} {reg_track} — 가산 받을 수 있는 자격/전형 보기",
@@ -782,3 +609,73 @@ with tab3:
                 "(이 공고는 취업지원대상자만 가산점이 있고, 장애인 가산은 없어요.) "
                 "왼쪽 '취업지원·장애 전형 해당자만' 항목에서 해당되는 게 있으면 체크해보세요.")
             st.caption("70점 이상이면 합격 컷 통과, 이후 고득점순으로 최종 선발해요.")
+
+# ════════════════ 탭 3: 근거·데이터 ════════════════
+with tab3:
+
+    # 1. 필기시험 합격선 (메인)
+    cs = ds["cut_stat"]
+    st.markdown('<div class="sect">필기시험 합격선</div>', unsafe_allow_html=True)
+    st.caption("과거 합격자들의 필기 점수 평균이에요.")
+    cc = st.columns(len(cs["기관별"]))
+    for col_, (inst, dd) in zip(cc, cs["기관별"].items()):
+        col_.metric(inst.replace("부산", ""), f"{dd['평균']}점",
+                    help=f"표본 {dd['n']}건 · 편차 ±{dd['표준편차']}점")
+
+    with st.expander("직무·기관별 상세 합격선"):
+        for j, s in ds["job_stats"].items():
+            kib = s.get("합격선_기관별", {})
+            if not kib:
+                continue
+            rows_txt = " / ".join(
+                f"{inst.replace('부산','')} {d['평균']}점(n={d['n']})"
+                for inst, d in kib.items() if d.get('평균'))
+            if rows_txt:
+                st.markdown(f"**{j}**: {rows_txt}")
+
+    st.write("")
+
+    # 2. 신규채용 추세
+    st.markdown('<div class="sect">신규채용 추세</div>', unsafe_allow_html=True)
+    st.caption("기관별 정규직 신규채용 인원 변화예요. 당해 규모는 공고로 확인하세요.")
+    tfig = go.Figure()
+    for inst, rows in ds["hire_trend"].items():
+        tfig.add_trace(go.Scatter(x=[r["연도"] for r in rows],
+                                  y=[r["정규직일반"] for r in rows],
+                                  mode="lines+markers", name=inst))
+    tfig.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10),
+                       plot_bgcolor="white", font=dict(family="Pretendard"))
+    st.plotly_chart(tfig, width="stretch")
+
+    st.write("")
+
+    # 3. 직무별 경쟁률
+    st.markdown('<div class="sect">직무별 경쟁률</div>', unsafe_allow_html=True)
+    st.caption("낮을수록 상대적으로 덜 치열해요.")
+    mm = [m for m in ds["mismatch"] if m["평균경쟁률"]]
+    mm.sort(key=lambda m: m["평균경쟁률"])
+    BAD2, WARN2, GOOD2, MUTED2 = "#ef4444", "#f59e0b", "#22c55e", "#94a3b8"
+    cmap = {"과경쟁": BAD2, "미달위험": WARN2, "적정": GOOD2}
+    fig = go.Figure(go.Bar(
+        x=[m["평균경쟁률"] for m in mm], y=[m["직무"] for m in mm], orientation="h",
+        marker_color=[cmap.get(m["분류"], MUTED2) for m in mm],
+        text=[f"{m['평균경쟁률']}:1" for m in mm], textposition="outside"))
+    fig.update_layout(title="🔴 치열 · 🟡 보통 · 🟢 여유",
+                      height=340, margin=dict(l=10, r=40, t=40, b=10),
+                      plot_bgcolor="white", font=dict(family="Pretendard"))
+    st.plotly_chart(fig, width="stretch")
+
+    st.write("")
+
+    # 4. AI 비환각 검증 (맨 아래)
+    with st.expander("AI 비환각 검증"):
+        h1, h2, h3 = st.columns(3)
+        h1.metric("데이터 있는 질문, 정답률", "100%")
+        h2.metric("데이터 없는 질문, 방어율", "100%")
+        h3.metric("지어낸 수치", "0건")
+        if st.button("없는 데이터 물어보기 테스트", key="halluc_demo"):
+            demo_q = "부산시설공단 일반전형 필기 합격선 평균은?"
+            demo_a = ai.chat(student, recs, demo_q, ds=ds)
+            st.markdown(f"**질문**: {demo_q}")
+            st.success(f"**AI 답변**: {demo_a}")
+
