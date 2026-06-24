@@ -141,36 +141,39 @@ ds = get_dataset()
 
 # ── 신호등: 경쟁률을 '여유/보통/치열'로 ──
 def signal(ratio):
-    """경쟁률 → (라벨, 색, 쉬운 설명)"""
+    """경쟁률 → (라벨, 색, 쉬운 설명). 'N:1'과 'N명 중 1명'을 같이 보여준다."""
     if not ratio:
         return ("데이터 적음", MUTED, "표본이 적어요")
+    r = round(ratio)
+    desc = f"경쟁률 {r}:1 (약 {r}명 중 1명 합격)"
     if ratio <= 15:
-        return ("여유", GOOD, f"평균 {round(ratio)}명 중 1명")
+        return ("여유", GOOD, desc)
     if ratio <= 50:
-        return ("보통", WARN, f"평균 {round(ratio)}명 중 1명")
-    return ("치열", BAD, f"평균 {round(ratio)}명 중 1명")
+        return ("보통", WARN, desc)
+    return ("치열", BAD, desc)
 
 
 def short_target(roadmap_target: str) -> str:
-    """'필기 기준선 66점 + 버퍼 2점 → 68점 목표' → '필기 68점 목표'."""
+    """'필기 기준선 66점 + 버퍼 2점 → 68점 목표' → '필기시험 68점 목표(100점 만점)'."""
     import re
     m = re.search(r"(\d+)점 목표", roadmap_target)
-    return f"필기 {m.group(1)}점 목표" if m else roadmap_target
+    return f"필기시험 {m.group(1)}점 목표 (100점 만점)" if m else roadmap_target
 
 
 def short_lang(lang_msg) -> str:
-    """'공고상 토익 최저 700점 사례 확인됨 (현재 700 — 충족)' → '토익 700 이상 (충족)'."""
+    """'공고상 토익 최저 700점 사례 확인됨 (현재 800 — 충족)'
+       → '토익 700 이상 필요 · ✅ 내 점수로 충족'."""
     if not lang_msg:
         return ""
     import re
     m = re.search(r"토익 최저 (\d+)", lang_msg)
-    base = f"토익 {m.group(1)} 이상" if m else "어학 요건 있음"
+    base = f"토익 {m.group(1)}점 이상 필요" if m else "어학 요건 있음"
     if "충족" in lang_msg and "부족" not in lang_msg:
-        return base + " · 충족"
+        return base + " · ✅ 내 점수로 충족"
     if "부족" in lang_msg:
         g = re.search(r"(\d+)점 부족", lang_msg)
-        return base + (f" · {g.group(1)}점 부족" if g else " · 부족")
-    return base
+        return base + (f" · ⚠️ {g.group(1)}점 부족" if g else " · ⚠️ 부족")
+    return base + " (내 어학 점수 입력하면 충족 여부 표시)"
 
 
 def _fmt_req(req: dict) -> str:
@@ -260,8 +263,8 @@ with tab1:
         st.markdown(f"""
         <div class="verdict">
           <div class="lbl">데이터가 추천하는 1순위</div>
-          <div class="big">{top['직무']} — 경쟁 {lbl} ({desc})</div>
-          <div class="sub">{major} {grade}학년 기준 · 다음 할 일: {short_target(top['로드맵']['필기목표'])}</div>
+          <div class="big">{top['직무']} — 경쟁 {lbl}</div>
+          <div class="sub">{desc} · {major} {grade}학년 기준 · 다음 할 일: {short_target(top['로드맵']['필기목표'])}</div>
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -299,33 +302,50 @@ with tab1:
           <div class="rk">{i}순위</div>
           <div class="nm">{r['직무']}</div>
           <span class="signal sig-{lbl}">
-            <span class="dot" style="background:{col}"></span>경쟁 {lbl} · {desc}</span>
+            <span class="dot" style="background:{col}"></span>{desc}</span>
           {conf_line}
           {why_high}
           <div>{tags}</div>
           <div class="facts">
-            🎯 <b>{short_target(r['로드맵']['필기목표'])}</b><br>
-            🎓 준비할 자격: {certs_txt}
+            🎯 <b>{short_target(r['로드맵']['필기목표'])}</b>
+            <span class="muted">— 이 직무 채용시험(NCS+전공) 목표 점수예요</span><br>
+            🎓 따두면 좋은 자격증: {certs_txt}
             {('<br>🗣 ' + lang_txt) if lang_txt else ''}
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        with st.expander(f"왜 {i}순위인지 · 더 자세히"):
-            w = st.session_state.weights
-            cut = (f"평균 합격선 {d['합격선평균']}점 (±{d['합격선표준편차']})"
-                   if d["합격선평균"] else "합격선 공시 없음")
-            if d["합격선평균"] and len(d.get("합격선기관", [])) > 1:
-                cut += " · 기관마다 시험이 달라 참고용"
+        with st.expander(f"💡 추천 점수 {r['적합도']}점은 무슨 뜻인가요? · {i}순위 이유"):
             st.markdown(
-                f"**점수 계산**\n"
-                f"- 전공 맞춤 {int(comp['전공적합']*100)}% × {w['fit']:.0%}"
-                f"{' (블라인드라 모든 전공 100%)' if r['블라인드'] else ''}\n"
-                f"- 경쟁 여유 {int(comp['경쟁여유']*100)}% × {w['comp']:.0%} "
-                f"— 경쟁률 {d['일반경쟁률']}:1 (낮을수록 ↑)\n"
-                f"- 데이터 충분한 정도 {int(comp['표본량']*100)}% × {w['size']:.0%}\n"
-                f"- 합쳐서 → **추천 점수 {r['적합도']}점**\n\n"
-                f"**합격선**: {cut}")
+                f"**추천 점수**는 합격 가능성이 아니에요. "
+                f"'내 전공으로 지원 가능한지 + 경쟁이 덜한지 + 데이터가 믿을 만한지'를 "
+                f"0~100으로 합친 **'데이터상 유리한 정도'**예요. 높을수록 데이터상 유리해요.")
+            comp_r = round(d["일반경쟁률"]) if d["일반경쟁률"] else None
+            bullets = []
+            if r["블라인드"]:
+                bullets.append("**전공 적합**: 이 직무는 전공을 안 보는 블라인드 채용이라 누구나 지원 가능")
+            else:
+                bullets.append(f"**전공 적합**: 내 전공({major})으로 지원하기 적합한 직무")
+            if comp_r:
+                bullets.append(f"**경쟁 여유**: 과거 평균 경쟁률 {comp_r}:1 "
+                               f"({'덜 치열한 편' if d['일반경쟁률']<=50 else '치열한 편'})")
+            conf = d.get("신뢰", {})
+            if conf.get("한줄"):
+                bullets.append(f"**데이터 신뢰도**: {conf.get('등급')} — {conf['한줄']}")
+            st.markdown("\n".join(f"- {b}" for b in bullets))
+
+            if d["합격선평균"]:
+                cut_txt = (f"과거 합격자들의 **필기시험 평균 점수는 {d['합격선평균']}점**이었어요"
+                           f"(100점 만점). 평균이라 딱 맞추면 떨어질 수 있어서, "
+                           f"위 '🎯 목표 점수'는 여기에 안전 점수를 더한 값이에요.")
+                if len(d.get("합격선기관", [])) > 1:
+                    cut_txt += ("\n\n⚠️ 이 평균은 교통공사·도시공사 두 기관을 합친 값인데, "
+                                "두 기관은 시험 과목이 서로 달라요. 그래서 '정확한 합격선'이 "
+                                "아니라 '대략 이 정도' 참고용이에요.")
+                st.markdown(cut_txt)
+            else:
+                st.caption("이 직무는 합격선이 공개되지 않아, 목표 점수는 공기업 일반 규정(과목 40%+총점 60%)으로 추정했어요.")
+
             if r["로드맵"]["블라인드안내"]:
                 st.info(r["로드맵"]["블라인드안내"])
             if r["로드맵"].get("신뢰경고"):
@@ -456,7 +476,8 @@ with tab2:
             st.caption("→ 가짜 점수를 만들지 않고 '데이터에 없음 → 공고 확인'으로 답하면 통과예요.")
     st.write("")
 
-    st.markdown("**직무별 경쟁률** (낮을수록 들어가기 쉬움)")
+    st.markdown("**직무별 경쟁률** — 몇 명 중 1명 뽑았나 (낮을수록 들어가기 쉬움)")
+    st.caption("막대 옆 숫자는 '경쟁률 N:1' = 평균적으로 N명 지원해서 1명 합격했다는 뜻이에요.")
     mm = [m for m in ds["mismatch"] if m["평균경쟁률"]]
     mm.sort(key=lambda m: m["평균경쟁률"])
     cmap = {"과경쟁": BAD, "미달위험": WARN, "적정": GOOD}
@@ -470,23 +491,27 @@ with tab2:
     st.plotly_chart(fig, width="stretch")
 
     cs = ds["cut_stat"]
-    with st.expander("일반 vs 사회배려 전형 차이 보기"):
+    with st.expander("일반전형 vs 사회배려전형 — 경쟁률 차이 보기"):
+        st.markdown("같은 직무라도 **어느 전형으로 지원하느냐**에 따라 경쟁률이 달라요. "
+                    "아래 막대는 **경쟁률(몇 명 중 1명 뽑았나)**을 비교한 거예요. "
+                    "사회배려 전형(장애·취업지원 등 해당자만 지원)이 보통 경쟁률이 더 낮아요.")
         gj = [(j, s["일반_가중경쟁률"], s["사회배려_가중경쟁률"])
               for j, s in ds["job_stats"].items()
               if s["일반_가중경쟁률"] and s["사회배려_가중경쟁률"]]
         gj.sort(key=lambda t: -t[1])
         if gj:
             gfig = go.Figure()
-            gfig.add_trace(go.Bar(name="일반", y=[t[0] for t in gj],
+            gfig.add_trace(go.Bar(name="일반전형 경쟁률", y=[t[0] for t in gj],
                                   x=[t[1] for t in gj], orientation="h", marker_color=MUTED))
-            gfig.add_trace(go.Bar(name="사회배려", y=[t[0] for t in gj],
+            gfig.add_trace(go.Bar(name="사회배려전형 경쟁률", y=[t[0] for t in gj],
                                   x=[t[2] for t in gj], orientation="h", marker_color=TEAL))
             gfig.update_layout(barmode="group", height=300,
-                               margin=dict(l=10, r=10, t=10, b=10),
+                               xaxis_title="경쟁률 (N:1, 낮을수록 유리)",
+                               margin=dict(l=10, r=10, t=10, b=40),
                                plot_bgcolor="white", font=dict(family="Pretendard"))
             st.plotly_chart(gfig, width="stretch")
-        st.caption("사회배려(장애·보훈·취업지원)는 ‘직무’가 아니라 ‘전형’이에요. "
-                   "단, 셋은 법적으로 다른 집단이니 실제 지원 가능 여부는 공고를 확인하세요.")
+        st.caption("사회배려(장애·보훈·취업지원)는 ‘직무’가 아니라 지원 ‘전형’이에요. "
+                   "셋은 법적으로 다른 집단이라, 실제 지원 가능 여부는 공고를 확인하세요.")
 
     with st.expander("어떤 데이터를 어디까지 가지고 있나요? (커버리지)"):
         cov = ds["coverage"]
@@ -516,13 +541,16 @@ with tab2:
         st.caption("키워드가 둘 이상 겹치는 모호 케이스(예: '공무직 채용(전기설비 유지보수)')는 "
                    "검증표에서 따로 검토해요. 분류 근거를 숨기지 않는 게 핵심이에요.")
 
-    with st.expander("필기 합격선 (기관별)"):
+    with st.expander("필기시험 합격선 (과거 합격자 평균 점수)"):
+        st.markdown("공기업 필기시험은 보통 **NCS 직업기초능력 + 전공시험**으로 100점 만점이에요. "
+                    "아래는 **과거 합격자들의 필기 평균 점수**예요(이 점수 근처면 합격권이었다는 뜻).")
         cc = st.columns(len(cs["기관별"]) + 1)
         for col_, (inst, dd) in zip(cc, cs["기관별"].items()):
             col_.metric(inst.replace("부산", ""), f"{dd['평균']}점",
-                        help=f"n={dd['n']} · ±{dd['표준편차']}")
-        cc[-1].metric("혼합 평균", f"{cs['전체평균']}점", help="참고용. 직접 비교 금지")
-        st.caption("기관마다 시험 과목이 달라서, 합격선을 직접 비교하면 안 돼요.")
+                        help=f"표본 {dd['n']}건 · 점수 편차 ±{dd['표준편차']}점")
+        cc[-1].metric("혼합 평균", f"{cs['전체평균']}점", help="두 기관 합친 값. 참고용")
+        st.caption("⚠️ 기관마다 시험 과목·난이도가 달라서, 두 기관 합격선을 직접 비교하면 안 돼요. "
+                   "'대략 이 정도' 참고용이에요.")
 
     with st.expander("신규채용 추세"):
         tfig = go.Figure()
@@ -537,35 +565,43 @@ with tab2:
 
 # ════════════════ 탭 3: 더보기 ════════════════
 with tab3:
-    st.caption("⚠️ 여기는 특정 공고 기준 계산기예요. 핵심 추천(탭1)과는 별개고, "
-               "공고가 바뀌면 값도 달라져요.")
+    st.caption("⚠️ 여기는 '특정 공고 하나'를 기준으로 한 계산기 모음이에요. "
+               "탭1의 전체 추천과는 별개고, 공고가 바뀌면 값도 달라져요.")
     sub1, sub2, sub3 = st.tabs(["🎓 청년인턴 점수", "🏢 정규직 가산 계산", "📋 관광공사 계약직 체커"])
 
     with sub1:
         st.markdown('<div class="sect">청년인턴 서류 점수 계산기</div>', unsafe_allow_html=True)
-        st.caption("출처: 부산교통공사 제2026-245호 공고 (명시된 범위만 계산)")
+        st.markdown("부산교통공사 청년인턴 지원 시, **내가 가진 자격증·가산점으로 서류 점수가 "
+                    "몇 점인지** 자동 계산해줘요. 내가 바꿀 수 있는 '정량 점수' 부분만 보여줘요.")
+        st.caption("출처: 부산교통공사 제2026-245호 공고에 명시된 배점만 계산해요.")
         quant = sc.intern_quant_score(student.get("보유자격", []))
         bonus = sc.bonus_points(student.get("가산", {}), stage_max=100)
         res = sc.residency_ok(student.get("거주지", ""))
         c1, c2, c3 = st.columns(3)
-        c1.metric("자격증 점수", f"{quant['정량점수']} / {quant['만점']}")
-        c2.metric("가산 비율", f"+{bonus['가산비율']}%")
-        c3.metric("거주지", "충족" if res["충족"] else "미충족")
+        c1.metric("내 자격증 점수", f"{quant['정량점수']} / {quant['만점']}점",
+                  help="공고에 명시된 자격증별 배점을 합산한 거예요. 항목별 최고 1개만 인정돼요.")
+        c2.metric("가산 비율", f"+{bonus['가산비율']}%",
+                  help="취업지원대상자·장애인 등 가산점이에요. 단계별 점수에 이 비율만큼 더해져요.")
+        c3.metric("거주지 요건", "충족" if res["충족"] else "미충족",
+                  help="부산·울산·경남 거주(또는 합산 36개월)면 응시 가능해요.")
         for item, dd in quant["세부"].items():
-            st.markdown(f"- **{item}**: {dd['자격'] or '없음'} → {dd['점수']}점")
+            st.markdown(f"- **{item}**: {dd['자격'] or '해당 자격증 없음'} → {dd['점수']}점")
         if bonus["근거"]:
-            st.markdown("**가산점**: " + " / ".join(bonus["근거"]))
+            st.markdown("**가산점 근거**: " + " / ".join(bonus["근거"]))
         if not res["충족"]:
             st.warning(res["설명"])
-        st.caption("자기소개서 정성평가(45점)는 자동 계산이 안 돼요. 위는 ‘내가 바꿀 수 있는 부분’이에요.")
+        st.caption("자기소개서 정성평가(45점)는 사람이 평가하는 거라 자동 계산이 안 돼요.")
 
     with sub2:
-        st.markdown('<div class="sect">정규직 필기 가산 계산기</div>', unsafe_allow_html=True)
-        st.caption("출처: 교통공사 제2025-186호 / 시설공단 제2024-98호 — 검증된 가점 규칙만 적용. "
-                   "합격 예측이 아니라 '필기 만점 대비 가산 비율'이에요.")
-        inst = st.radio("기관 (가점율이 달라요)", ["부산교통공사", "부산시설공단"],
-                        horizontal=True, key="reg_inst")
-        reg_track = st.selectbox("직무", [j for j in rc.TRACK_PREP if j != "청년인턴"],
+        st.markdown('<div class="sect">정규직 필기 가산점 계산기</div>', unsafe_allow_html=True)
+        st.markdown("정규직 필기시험에서 **내 자격증·가산 자격으로 몇 % 가산점을 받는지** 계산해줘요. "
+                    "예를 들어 전기기사가 있으면 필기 만점의 몇 %를 더 받는 식이에요. "
+                    "**기관마다 가점율이 달라서**, 기관을 바꿔 비교할 수 있어요.")
+        st.caption("출처: 교통공사 제2025-186호 / 시설공단 제2024-98호의 검증된 가점 규칙. "
+                   "합격 예측이 아니라 '필기 만점 대비 더 받는 점수 비율'이에요.")
+        inst = st.radio("어느 기관 기준으로 볼까요? (가점율이 달라요)",
+                        ["부산교통공사", "부산시설공단"], horizontal=True, key="reg_inst")
+        reg_track = st.selectbox("지원할 직무", [j for j in rc.TRACK_PREP if j != "청년인턴"],
                                  index=([j for j in rc.TRACK_PREP if j != "청년인턴"]
                                         .index(recs[0]["직무"])
                                         if recs[0]["직무"] in rc.TRACK_PREP else 0),
@@ -573,48 +609,64 @@ with tab3:
         reg = sc.regular_bonus_score(reg_track, student.get("보유자격", []),
                                      student.get("가산", {}), institution=inst)
         c1, c2 = st.columns([1, 2])
-        c1.metric("필기 가산 비율", f"+{reg['가산비율']}%")
+        c1.metric("내 필기 가산 비율", f"+{reg['가산비율']}%",
+                  help="필기시험 만점 대비 이 비율만큼 점수를 더 받아요.")
         with c2:
             if reg["근거"]:
                 st.markdown("**적용 내역**: " + " + ".join(reg["근거"]))
             else:
-                st.markdown("적용 가능한 가산이 없어요. (해당 자격증·전형 보유 시 반영)")
+                st.markdown("지금 입력값으로는 적용되는 가산점이 없어요. "
+                            "(해당 자격증을 따거나 가산 전형 대상이면 반영돼요.)")
         if inst == "부산교통공사" and student.get("가산", {}).get("장애인"):
             st.info("참고: 같은 장애인 가점도 교통공사 5% vs 시설공단 3%로 달라요. "
-                    "기관을 바꿔 비교해 보세요.")
+                    "위에서 기관을 바꿔 비교해 보세요.")
         st.caption(reg["주의"])
 
     with sub3:
         P = sc.TOURISM_CONTRACT_2026_42
-        st.markdown(f'<div class="sect">{P["공고"]}</div>', unsafe_allow_html=True)
-        st.caption(f"{P['고용형태']} · 계약 {P['계약기간']} · 총 {P['총원']}명")
-        st.caption("환산표로 추정하지 않고, 공고에 적힌 시험별 컷으로 직접 판정해요.")
+        st.markdown(f'<div class="sect">관광공사 계약직 지원 가능 여부 체커</div>', unsafe_allow_html=True)
+        st.markdown(f"부산관광공사 계약직 공고({P['공고']})는 **분야마다 요구하는 어학 점수가 "
+                    f"달라요.** 내 어학 점수로 **어느 분야에 지원할 수 있는지** 바로 확인해줘요. "
+                    f"공고에 적힌 점수 기준을 그대로 써서 정확하게 판정해요.")
+        st.caption(f"{P['고용형태']} · 계약 {P['계약기간']} · 총 {P['총원']}명 모집")
         lang_raw = student.get("어학원본", {})
         if not lang_raw:
-            st.warning("왼쪽에서 어학 점수를 넣으면 분야별 가능 여부가 나와요.")
+            st.warning("👈 왼쪽에서 어학 점수를 넣으면, 분야별로 지원 가능한지 표시돼요.")
         for field in P["분야"]:
             r = sc.field_eligibility(P, field, lang_raw)
             req_txt = _fmt_req(r["어학요건"])
             if not lang_raw and r["어학요건"]:
-                badge, c = "어학 입력 필요", MUTED
+                badge, c = "어학 점수 입력 필요", MUTED
             elif r["어학"]["적격"]:
-                badge, c = "지원 가능", GOOD
+                badge, c = "✅ 지원 가능", GOOD
             else:
-                badge, c = "어학 미달", BAD
+                badge, c = "❌ 어학 미달", BAD
             st.markdown(f"""
             <div class="card" style="padding:1rem 1.2rem">
               <div class="sc"><div class="v" style="font-size:1rem;color:{c}">{badge}</div></div>
               <div class="nm" style="font-size:1.05rem">{field}</div>
-              <div class="muted">선발 {r['인원']}명 · {r['근무지']}</div>
-              <div class="facts">🗣 {req_txt}<br>▸ {r['어학']['사유']}</div>
+              <div class="muted">선발 {r['인원']}명 · 근무지 {r['근무지']}</div>
+              <div class="facts">🗣 필요 어학: {req_txt}<br>▸ {r['어학']['사유']}</div>
             </div>
             """, unsafe_allow_html=True)
         st.divider()
-        st.markdown("**면접 점수 시뮬** (원점수는 직접 가정 — 예측 아님)")
-        raw = st.number_input("예상 면접 점수 (0~100)", 0, 100, 72, 1)
-        sim = sc.interview_score_bto_contract(raw, student.get("가산", {}))
-        s1, s2, s3 = st.columns(3)
-        s1.metric("원점수", f"{sim['면접원점수']}")
-        s2.metric("가점", f"+{sim['가산점적용']}")
-        s3.metric("70점 컷", "통과" if sim["컷통과"] else "미달")
-        st.caption(sim["주의"])
+        st.markdown("**면접에서 가산점이 어떤 도움이 되나요?**")
+        sim_base = sc.interview_score_bto_contract(70, {})        # 가산 없는 기준선
+        sim_user = sc.interview_score_bto_contract(70, student.get("가산", {}))
+        has_bonus = sim_user["가산점적용"] > 0
+        if has_bonus:
+            st.success(
+                f"내가 면접에서 **70점(합격 컷)**을 맞았을 때, "
+                f"가산점 **+{sim_user['가산점적용']}점**이 더해져 "
+                f"**{sim_user['최종점수']}점**이 돼요. "
+                f"같은 70점 받은 일반 지원자({sim_base['최종점수']}점)보다 "
+                f"정렬 순위가 더 높아져요 — 경쟁자가 같은 원점수여도 내가 앞서요.")
+            st.markdown(f"**적용 가산점**: {' / '.join(sim_user['가산근거'])}")
+            st.caption("70점 컷은 면접 원점수 기준. 가산점은 컷을 낮추는 게 아니라 "
+                       "합격자 간 정렬 순위를 올려줘요. 최종 선발은 가점 포함 고득점순이에요.")
+        else:
+            st.info(
+                "현재 입력된 정보로는 이 공고에서 적용되는 가산점이 없어요. "
+                "(이 공고는 취업지원대상자만 가산점이 있고, 장애인 가산은 없어요.) "
+                "왼쪽 '취업지원·장애 전형 해당자만' 항목에서 해당되는 게 있으면 체크해보세요.")
+            st.caption("70점 이상이면 합격 컷 통과, 이후 고득점순으로 최종 선발해요.")
