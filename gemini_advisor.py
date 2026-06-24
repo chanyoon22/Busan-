@@ -30,7 +30,7 @@ def _get_key():
     return os.environ.get("GEMINI_API_KEY")
 
 
-def _call(prompt: str, system: str, max_tokens=900, temp=0.4):
+def _call(prompt: str, system: str, max_tokens=8192, temp=0.4):
     key = _get_key()
     if not key:
         return None
@@ -195,7 +195,7 @@ def chat(student: dict, recs: list, question: str, ds: dict = None, history=None
         + "3~5문장으로 답하세요. 표에 없는 직무·가산점표·당해 일정 등은 "
           "'데이터에 없어 공고로 확인 필요'라고 정직하게 답하세요. 합격선은 과거 통계이며 "
           "예측이 아님을 한 번 짚으세요.")
-    return _call(prompt, _SYSTEM, max_tokens=700) or _fallback_chat(student, recs, question, ds)
+    return _call(prompt, _SYSTEM, max_tokens=8192) or _fallback_chat(student, recs, question, ds)
 
 
 def _fallback_roadmap(student: dict, recs: list) -> str:
