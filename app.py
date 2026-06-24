@@ -25,7 +25,7 @@ import recommender as rc
 import gemini_advisor as ai
 import scoring as sc
 
-st.set_page_config(page_title="부산 공공기관 커리어 로드맵",
+st.set_page_config(page_title="PassNavi · 부산 공공기관 커리어 내비",
                    page_icon="🧭", layout="wide")
 
 # ── 디자인 토큰 (차분/모던: 메인 1색 + 신호등) ──
@@ -43,9 +43,27 @@ st.markdown(f"""
   .main {{ background:{PAPER}; }}
   .block-container {{ padding-top:2.2rem; max-width:1100px; }}
 
-  /* 헤더 */
-  .hd h1 {{ font-size:1.55rem; font-weight:800; margin:0; letter-spacing:-.02em; }}
-  .hd p  {{ color:{MUTED}; margin:.3rem 0 0; font-size:.95rem; }}
+  /* 헤더 — PassNavi 브랜드 */
+  .hd {{ display:flex; align-items:center; gap:.6rem; margin-bottom:.2rem; }}
+  .hd .logo {{ font-size:1.9rem; line-height:1; }}
+  .hd .brand {{ font-size:1.7rem; font-weight:800; letter-spacing:-.02em;
+                background:linear-gradient(90deg,{TEAL},#1b8a99);
+                -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+                background-clip:text; }}
+  .hd .tag {{ font-size:.82rem; font-weight:700; color:{TEAL}; background:#eef5f6;
+              padding:.2rem .55rem; border-radius:999px; align-self:center; }}
+  .hd-sub {{ color:{MUTED}; margin:.1rem 0 0; font-size:.95rem; }}
+
+  /* 서비스 설명 배너 (자소설닷컴식 깔끔 카드) */
+  .intro {{ background:#fff; border:1px solid {LINE}; border-left:4px solid {TEAL};
+            border-radius:14px; padding:1rem 1.2rem; margin:1rem 0 .4rem; }}
+  .intro .t {{ font-weight:800; font-size:1rem; margin-bottom:.45rem; }}
+  .intro .d {{ color:{INK}; font-size:.9rem; line-height:1.75; }}
+  .intro .d b {{ color:{TEAL}; }}
+  .intro .steps {{ display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.7rem; }}
+  .intro .step {{ flex:1; min-width:150px; background:{PAPER}; border:1px solid {LINE};
+                  border-radius:10px; padding:.6rem .8rem; font-size:.84rem; }}
+  .intro .step b {{ color:{TEAL}; display:block; margin-bottom:.15rem; }}
 
   /* 한 줄 결론 배너 */
   .verdict {{ background:{TEAL}; color:#fff; border-radius:14px;
@@ -87,10 +105,31 @@ st.markdown(f"""
 
 st.markdown("""
 <div class="hd">
-  <h1>🧭 부산 공공기관 커리어 로드맵</h1>
-  <p>내 전공으로 어디가 그나마 덜 치열하고, 졸업까지 뭘 준비하면 되는지 알려드려요.</p>
+  <span class="logo">🧭</span>
+  <span class="brand">PassNavi</span>
+  <span class="tag">패스나비 · 부산 공공기관</span>
 </div>
+<div class="hd-sub">합격까지 가는 길을 데이터로 안내하는 커리어 내비게이터</div>
 """, unsafe_allow_html=True)
+
+with st.container():
+    st.markdown("""
+    <div class="intro">
+      <div class="t">🧭 PassNavi는 어떤 서비스인가요?</div>
+      <div class="d">
+        부산 공공기관(교통·도시·관광공사 등)의 <b>공개 채용데이터</b>를 모아,
+        직무를 아직 못 정한 학생에게 <b>데이터상 덜 치열한 직무</b>와
+        <b>졸업까지의 준비 순서</b>를 안내해요. 합격을 예측하는 게 아니라,
+        과거 채용데이터로 정리한 <b>준비 우선순위</b>를 보여줘요.
+      </div>
+      <div class="steps">
+        <div class="step"><b>1. 내 정보 입력</b>왼쪽에서 학년·전공·자격증을 넣고 '추천 받기'</div>
+        <div class="step"><b>2. 데이터 추천</b>경쟁률·신뢰도 기반 직무 순위와 우회 경로 확인</div>
+        <div class="step"><b>3. 근거 확인</b>'근거·데이터' 탭에서 출처와 비환각 검증까지</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 
 @st.cache_data(show_spinner=False)
