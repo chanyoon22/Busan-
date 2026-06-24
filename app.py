@@ -337,33 +337,65 @@ with tab1:
 
         with st.expander(f"💡 추천 점수 {r['적합도']}점은 무슨 뜻인가요? · {i}순위 이유"):
             comp_r = round(d["일반경쟁률"]) if d["일반경쟁률"] else None
-            bullets = []
-            if r["블라인드"]:
-                bullets.append("**전공 적합**: 전공·학력 안 보는 블라인드 채용 — 누구나 지원 가능")
-            else:
-                bullets.append(f"**전공 적합**: 내 전공({major})으로 지원하기 적합")
-            if comp_r:
-                bullets.append(f"**경쟁 여유**: 과거 평균 경쟁률 {comp_r}:1")
             conf = d.get("신뢰", {})
-            if conf.get("등급"):
-                bullets.append(f"**데이터 신뢰도**: {conf.get('등급')}")
-            st.markdown("\n".join(f"- {b}" for b in bullets))
 
+            # ── 상단 지표 뱃지 row ──
+            fit_txt = "블라인드 채용 — 전공 무관" if r["블라인드"] else f"{major} 전공 적합"
+            comp_txt = f"{comp_r}:1" if comp_r else "데이터 없음"
+            comp_bg  = "#e8f5ee" if comp_r and comp_r <= 50 else "#fff3e0"
+            comp_fc  = GOOD      if comp_r and comp_r <= 50 else WARN
+            trust_txt = conf.get("등급", "—")
+            st.markdown(f"""
+            <div style="display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:1.1rem">
+              <span style="background:#eef5f6;color:{TEAL};padding:.3rem .75rem;
+                border-radius:999px;font-size:.82rem;font-weight:700">🎓 {fit_txt}</span>
+              <span style="background:{comp_bg};color:{comp_fc};padding:.3rem .75rem;
+                border-radius:999px;font-size:.82rem;font-weight:700">⚡ 경쟁률 {comp_txt}</span>
+              <span style="background:#f0f4f8;color:{MUTED};padding:.3rem .75rem;
+                border-radius:999px;font-size:.82rem;font-weight:700">📊 신뢰도 {trust_txt}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── 기관별 필기 목표 — 빅넘버 카드 ──
             기관별 = r["로드맵"].get("필기기관별", [])
             if 기관별:
-                st.markdown("**과거 합격자 필기 평균 점수** (기관 기준, 100점 만점)")
-                for t in 기관별:
-                    st.markdown(
-                        f"- **{t['기관'].replace('부산','')}**: 평균 "
-                        f"**{t['합격선평균']}점** → 목표 **{t['목표']}점** (표본 {t['표본']}건)")
+                st.markdown(f'<div style="font-size:.8rem;color:{MUTED};font-weight:600;'
+                            f'margin-bottom:.55rem">📝 기관별 필기 목표 점수</div>',
+                            unsafe_allow_html=True)
+                inst_cols = st.columns(len(기관별))
+                for col_, t in zip(inst_cols, 기관별):
+                    inst_name = t["기관"].replace("부산", "")
+                    col_.markdown(f"""
+                    <div style="background:#f8fafc;border:1.5px solid {TEAL}44;
+                      border-radius:14px;padding:.85rem 1rem;text-align:center">
+                      <div style="font-size:.76rem;color:{MUTED};font-weight:700;
+                        letter-spacing:.02em">{inst_name}</div>
+                      <div style="font-size:2rem;font-weight:800;color:{TEAL};
+                        line-height:1.1;margin:.2rem 0">{t["목표"]}점</div>
+                      <div style="font-size:.77rem;color:{MUTED}">
+                        합격자 평균 <b>{t["합격선평균"]}점</b></div>
+                      <div style="font-size:.71rem;color:#b0b8c4;margin-top:.1rem">
+                        표본 {t["표본"]}건</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
+            # ── 합격자 준비 가이드 ──
             guide = r["로드맵"].get("합격자가이드")
             if guide:
-                st.markdown("---")
-                st.markdown("**🧭 합격자들은 실제로 이만큼 준비해요**")
-                st.markdown(f"> {guide['한줄']}")
-                for sp in guide["합격자스펙"]:
-                    st.markdown(f"- {sp}")
+                st.markdown(f'<div style="margin-top:1.3rem;font-size:.82rem;'
+                            f'font-weight:700;color:{TEAL}">🧭 합격자들은 실제로 이만큼 준비해요</div>',
+                            unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="font-size:.87rem;color:{INK};border-left:3px solid {TEAL};'
+                    f'padding:.4rem .85rem;margin:.5rem 0;font-style:italic;color:{MUTED}">'
+                    f'{guide["한줄"]}</div>', unsafe_allow_html=True)
+                chips = "".join(
+                    f'<span style="background:#eef5f6;color:{TEAL};padding:.25rem .65rem;'
+                    f'border-radius:999px;font-size:.8rem;font-weight:600;'
+                    f'margin:.2rem .2rem 0 0;display:inline-block">{sp}</span>'
+                    for sp in guide["합격자스펙"])
+                st.markdown(f'<div style="margin:.45rem 0 .7rem">{chips}</div>',
+                            unsafe_allow_html=True)
                 st.caption(guide["현실"])
 
     if not recs:
@@ -619,8 +651,13 @@ with tab3:
     st.caption("과거 합격자들의 필기 점수 평균이에요.")
     cc = st.columns(len(cs["기관별"]))
     for col_, (inst, dd) in zip(cc, cs["기관별"].items()):
-        col_.metric(inst.replace("부산", ""), f"{dd['평균']}점",
-                    help=f"표본 {dd['n']}건 · 편차 ±{dd['표준편차']}점")
+        col_.markdown(f"""
+        <div style="background:#f8fafc;border:1.5px solid {TEAL}44;border-radius:14px;
+          padding:.85rem 1rem;text-align:center;margin-bottom:.5rem">
+          <div style="font-size:.78rem;color:{MUTED};font-weight:700">{inst.replace('부산','')}</div>
+          <div style="font-size:2rem;font-weight:800;color:{TEAL};line-height:1.1;margin:.2rem 0">{dd['평균']}점</div>
+          <div style="font-size:.76rem;color:#b0b8c4">편차 ±{dd['표준편차']}점 · 표본 {dd['n']}건</div>
+        </div>""", unsafe_allow_html=True)
 
     with st.expander("직무·기관별 상세 합격선"):
         for j, s in ds["job_stats"].items():
@@ -628,7 +665,7 @@ with tab3:
             if not kib:
                 continue
             rows_txt = " / ".join(
-                f"{inst.replace('부산','')} {d['평균']}점(n={d['n']})"
+                f"{inst.replace('부산','')} **{d['평균']}점**(n={d['n']})"
                 for inst, d in kib.items() if d.get('평균'))
             if rows_txt:
                 st.markdown(f"**{j}**: {rows_txt}")
